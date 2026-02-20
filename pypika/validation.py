@@ -4,14 +4,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Flag, auto, Enum
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
+
+if TYPE_CHECKING:
+    from pypika.queries import JoinOn, QueryBuilder
+
+# Pseudotypes: the exact cursor and row-value types depend on the SQL engine.
+pCursor = Any
+pValue = Any
 
 
 class Validate(Flag):
+    NONE = 0              # empty flag: no validation
     ONE_TO_MANY = auto()  # left key unique: each right row maps to at most 1 left row
     MANY_TO_ONE = auto()  # right key unique: each left row maps to at most 1 right row
     ONE_TO_ONE = ONE_TO_MANY | MANY_TO_ONE
-    LEFT_TOTAL = auto()  # every left row has at least 1 match on the right
+    LEFT_TOTAL = auto()   # every left row has at least 1 match on the right
     RIGHT_TOTAL = auto()  # every right row has at least 1 match on the left
     TOTAL = LEFT_TOTAL | RIGHT_TOTAL
     MANDATORY = ONE_TO_ONE | TOTAL
@@ -27,11 +35,11 @@ class Status(Enum):
 @dataclass
 class Results:
     status: Status
-    value: Optional[List] = None
+    value: Optional[List[pValue]] = None
     error_msg: Optional[str] = None
     error_loc: Optional[str] = None
     error_size: Optional[int] = None
-    error_sample: Optional[List] = None
+    error_sample: Optional[List[pValue]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -43,12 +51,12 @@ def _q(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def _tname(table) -> str:
+def _tname(table: Any) -> str:
     """Return the raw table name string from a Table object."""
     return table._table_name
 
 
-def _get_join_fields(criterion, right_table):
+def _get_join_fields(criterion: Any, right_table: Any):
     """
     Given an ON criterion and the right-hand Table, return (left_field, right_field).
     Returns (None, None) if the fields cannot be determined.
@@ -61,7 +69,7 @@ def _get_join_fields(criterion, right_table):
     return None, None
 
 
-def _check_uniqueness(cursor, table, col_name: str, flag_name: str) -> Optional[Results]:
+def _check_uniqueness(cursor: pCursor, table: Any, col_name: str, flag_name: str) -> Optional[Results]:
     """
     Verify that *col_name* has no duplicate values in *table*.
 
@@ -80,7 +88,7 @@ def _check_uniqueness(cursor, table, col_name: str, flag_name: str) -> Optional[
         return None
 
     cursor.execute(sample_sql)
-    sample = cursor.fetchall()
+    sample: List[pValue] = cursor.fetchall()
     return Results(
         status=Status.VALIDATION_ERROR,
         error_msg=f"{flag_name} violated: duplicate values in {tbl}.{col}",
@@ -90,7 +98,9 @@ def _check_uniqueness(cursor, table, col_name: str, flag_name: str) -> Optional[
     )
 
 
-def _check_left_total(cursor, left_table, left_col: str, right_table, right_col: str) -> Optional[Results]:
+def _check_left_total(
+    cursor: pCursor, left_table: Any, left_col: str, right_table: Any, right_col: str
+) -> Optional[Results]:
     """
     Verify every row in *left_table* has at least one match in *right_table*.
 
@@ -112,7 +122,7 @@ def _check_left_total(cursor, left_table, left_col: str, right_table, right_col:
         return None
 
     cursor.execute(sample_sql)
-    sample = cursor.fetchall()
+    sample: List[pValue] = cursor.fetchall()
     return Results(
         status=Status.VALIDATION_ERROR,
         error_msg=f"LEFT_TOTAL violated: {count} left-side row(s) have no match on right side",
@@ -122,7 +132,9 @@ def _check_left_total(cursor, left_table, left_col: str, right_table, right_col:
     )
 
 
-def _check_right_total(cursor, left_table, left_col: str, right_table, right_col: str) -> Optional[Results]:
+def _check_right_total(
+    cursor: pCursor, left_table: Any, left_col: str, right_table: Any, right_col: str
+) -> Optional[Results]:
     """
     Verify every row in *right_table* has at least one match in *left_table*.
 
@@ -144,7 +156,7 @@ def _check_right_total(cursor, left_table, left_col: str, right_table, right_col
         return None
 
     cursor.execute(sample_sql)
-    sample = cursor.fetchall()
+    sample: List[pValue] = cursor.fetchall()
     return Results(
         status=Status.VALIDATION_ERROR,
         error_msg=f"RIGHT_TOTAL violated: {count} right-side row(s) have no match on left side",
@@ -154,7 +166,7 @@ def _check_right_total(cursor, left_table, left_col: str, right_table, right_col
     )
 
 
-def _validate_join(cursor, join) -> Optional[Results]:
+def _validate_join(cursor: pCursor, join: JoinOn) -> Optional[Results]:
     """
     Run all validation checks for a single join.  Returns the first
     Results(VALIDATION_ERROR) encountered, or None if all checks pass.
@@ -199,7 +211,7 @@ def _validate_join(cursor, join) -> Optional[Results]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def execute(cursor: Any, query: Any, skip_validation: bool = False) -> Results:
+def execute(cursor: pCursor, query: QueryBuilder, skip_validation: bool = False) -> Results:
     """
     Execute a pypika query, optionally validating join cardinality first.
 
@@ -218,29 +230,21 @@ def execute(cursor: Any, query: Any, skip_validation: bool = False) -> Results:
     """
     sql = query.get_sql()
 
-    if skip_validation:
-        try:
-            cursor.execute(sql)
-            value = cursor.fetchall()
-            return Results(status=Status.NOT_VALIDATED, value=value)
-        except Exception as exc:
-            return Results(status=Status.SQL_ERROR, error_msg=str(exc))
+    if not skip_validation:
+        for join in query._joins:
+            if not (hasattr(join, "validation") and join.validation):
+                continue
+            try:
+                result = _validate_join(cursor, join)
+            except Exception as exc:
+                return Results(status=Status.SQL_ERROR, error_msg=str(exc))
+            if result is not None:
+                return result
 
-    # Run validation queries left-to-right for every join that carries a flag.
-    for join in query._joins:
-        if not (hasattr(join, "validation") and join.validation is not None):
-            continue
-        try:
-            result = _validate_join(cursor, join)
-        except Exception as exc:
-            return Results(status=Status.SQL_ERROR, error_msg=str(exc))
-        if result is not None:
-            return result
-
-    # All validations passed – execute the main query.
     try:
         cursor.execute(sql)
-        value = cursor.fetchall()
-        return Results(status=Status.OK, value=value)
+        value: List[pValue] = cursor.fetchall()
+        status = Status.NOT_VALIDATED if skip_validation else Status.OK
+        return Results(status=status, value=value)
     except Exception as exc:
         return Results(status=Status.SQL_ERROR, error_msg=str(exc))

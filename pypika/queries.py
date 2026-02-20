@@ -4,7 +4,7 @@ import sys
 from collections.abc import Sequence
 from copy import copy
 from functools import reduce
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
 
 from pypika.enums import Dialects, JoinType, ReferenceOption, SetOperation
 from pypika.terms import (
@@ -38,6 +38,8 @@ if TYPE_CHECKING:
         from typing import Self
     else:
         from typing_extensions import Self
+
+from pypika.validation import Validate
 
 __author__ = "Timothy Heys"
 __email__ = "theys@kayak.com"
@@ -1044,7 +1046,7 @@ class QueryBuilder(Selectable, Term):
         self,
         item: Table | QueryBuilder | AliasedQuery | Selectable,
         how: JoinType = JoinType.inner,
-        validate: Any = None,
+        validate: Validate = Validate.NONE,
     ) -> Joiner[Self]:
         if isinstance(item, Table):
             return Joiner(self, item, how, type_label="table", validate=validate)
@@ -1062,31 +1064,31 @@ class QueryBuilder(Selectable, Term):
 
         raise ValueError("Cannot join on type '%s'" % type(item))
 
-    def inner_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+    def inner_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
         return self.join(item, JoinType.inner, validate=validate)
 
-    def left_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+    def left_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
         return self.join(item, JoinType.left, validate=validate)
 
-    def left_outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+    def left_outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
         return self.join(item, JoinType.left_outer, validate=validate)
 
-    def right_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+    def right_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
         return self.join(item, JoinType.right, validate=validate)
 
-    def right_outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+    def right_outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
         return self.join(item, JoinType.right_outer, validate=validate)
 
-    def outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+    def outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
         return self.join(item, JoinType.outer, validate=validate)
 
-    def full_outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+    def full_outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
         return self.join(item, JoinType.full_outer, validate=validate)
 
-    def cross_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+    def cross_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
         return self.join(item, JoinType.cross, validate=validate)
 
-    def hash_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+    def hash_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
         return self.join(item, JoinType.hash, validate=validate)
 
     @builder
@@ -1635,7 +1637,7 @@ class Joiner(Generic[QB]):
         item: Table | QueryBuilder | AliasedQuery,
         how: JoinType,
         type_label: str,
-        validate: Any = None,
+        validate: Validate = Validate.NONE,
     ) -> None:
         self.query = query
         self.item = item
@@ -1716,7 +1718,7 @@ class Join:
 
 class JoinOn(Join):
     def __init__(
-        self, item: Term, how: JoinType, criteria: QueryBuilder, collate: str | None = None, validate: Any = None
+        self, item: Term, how: JoinType, criteria: QueryBuilder, collate: str | None = None, validate: Validate = Validate.NONE
     ) -> None:
         super().__init__(item, how)
         self.criterion = criteria
