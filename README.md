@@ -19,20 +19,20 @@ This does additional work to check that the tables are 1-1.
 SELECT *
 FROM base_table
 WHERE xkey IN (
-\   SELECT ykey
-\   FROM join_table
-\   GROUP BY ykey
-\   HAVING COUNT(*) > 1
+    SELECT ykey
+    FROM join_table
+    GROUP BY ykey
+    HAVING COUNT(*) > 1
 );
 
 -- Assert also empty
 SELECT *
 FROM join_table
 WHERE ykey IN (
-\   SELECT xkey
-\   FROM base_table
-\   GROUP BY xkey
-\   HAVING COUNT(*) > 1
+    SELECT xkey
+    FROM base_table
+    GROUP BY xkey
+    HAVING COUNT(*) > 1
 );
 ```
 
@@ -41,8 +41,8 @@ The full set of validation flags are:
 - `ONE_TO_MANY`: For every row on the right, there is at most 1 entry on the left.
 - `MANY_TO_ONE`: For every row on the left, there is at most 1 entry on the right.
 - `ONE_TO_ONE`: Both `ONE_TO_MANY` and `MANY_TO_ONE`.
-- `RIGHT_TOTAL`: For every row on the right, there is at least 1 entry on the left.
-- `LEFT_TOTAL`: For every row on the left, there is at least 1 entry on the right.
+- `RIGHT_TOTAL`: For every row on the right, there is at least 1 matching entry on the left (i.e., the right side is fully covered by the join).
+- `LEFT_TOTAL`: For every row on the left, there is at least 1 matching entry on the right (i.e., the left side is fully covered by the join).
 - `TOTAL`: Both `RIGHT_TOTAL` and `LEFT_TOTAL`.
 - `MANDATORY`: Both `ONE_TO_ONE` and `TOTAL`.
 
@@ -57,15 +57,29 @@ We introduce a function `execute` that takes a given cursor, and executes the sq
 - `error_size`: The number of rows that fail validation.
 - `error_sample`: A list of tuples of the first 10 rows that fail validation.
 
-This function can be run with the optional argument `validate=False`, then none of the validation steps would be run.  This would then just be a standard execution.  (This would be ideal for production.)
+This function can be run with the optional argument `skip_validation=True`, then none of the validation steps would be run. This would then just be a standard execution. (This would be ideal for production.)
 
 ```python
-def execute(query: Query, validate: bool = True) -> Results:
-\   ...
-\   
-\   if not validate:
-\   \   sql = query.get_sql()
-\   \   return Results(status=Status.NOT_VALIDATED, value=cur.execute(sql))
+def execute(cursor: pCursor, query: Query, skip_validation: bool = False) -> Results:
+    ...
+
+    if skip_validation:
+        sql = query.get_sql()
+        return Results(status=Status.NOT_VALIDATED, value=cursor.execute(sql))
+```
+
+Example usage:
+
+```python
+result = execute(cursor, query)
+if result.status == Status.VALIDATION_ERROR:
+    print(f"Validation failed at {result.error_loc}: {result.error_msg}")
+    print(f"Sample of {result.error_size} failing rows:")
+    for row in result.error_sample:
+        print(row)
+elif result.status == Status.OK:
+    for row in result.value:
+        print(row)
 ```
 
 ### Multi-table joins
@@ -76,7 +90,7 @@ If we have a multi-table join, we will evaluate these in order from left-to-righ
 Query.from_(x).inner_join(y, validate=Validate.ONE_TO_ONE).inner_join(z, validate=Validate.TOTAL)
 ```
 
-Will first check that the join of x and y is 1:1.  Then it will check that the join of (x JOIN y) to z is total.  This is different from the check that y JOIN z is total, followed by x JOIN (y JOIN z) is 1:1.  The left-to-right ordering is consistent with sql joining logic.
+This will first check that the join of x and y is 1:1. Then it will check that the join of (x JOIN y) to z is total. This is different from checking that y JOIN z is total, followed by x JOIN (y JOIN z) is 1:1. The left-to-right ordering is consistent with SQL joining logic.
 
 ## Internals
 
@@ -88,12 +102,12 @@ The validate-then-execute pattern does not provide any atomicity guarantees.  It
 
 ### What the library doesn't do
 
-As a principle, we don't try to optimize; this keeps the implementation simple, and optimizing could be counterproductive given so many sql implementations.  (Some work may be saved by server-side caching.)  This means:
+As a principle, we don't try to optimize; this keeps the implementation simple, and optimizing could be counterproductive given so many SQL implementations. (Some work may be saved by server-side caching.) The validation queries use simple `IN` subqueries which may not be optimal for very large tables; consider the performance implications for your data volumes. This means:
 
-1.  The library does not share information between the validations and the execution.  For example, it does not use the result of the query to then check for new duplicates on a 1:1.  Although this may be faster, it would force that check to happen locally, instead of sending the work to SQL server.  
-2.  The library does not share information between validations.  For example when we check every join of ((x JOIN y) JOIN z) JOIN w, we may be able to use results from one check to perform the next check.
+1. The library does not share information between the validations and the execution. For example, it does not use the result of the query to then check for new duplicates on a 1:1. Although this may be faster, it would force that check to happen locally, instead of sending the work to the SQL server.
+2. The library does not share information between validations. For example, when we check every join of ((x JOIN y) JOIN z) JOIN w, we may be able to use results from one check to perform the next check.
 
-The library follows a validate-then-execute pattern.  But the execute part is not modified by the validation.  For example, the query plan might prefer a hash join if it knew the tables were 1:1.  We don't communicate this back to the sql program; the execution would be the same with or without the validation.  This may be a subject of a future improvement.
+The library follows a validate-then-execute pattern, but the execute part is not modified by the validation. For example, the query plan might prefer a hash join if it knew the tables were 1:1. We don't communicate this back to the SQL program; the execution would be the same with or without the validation. This may be a subject of a future improvement.
 
-The library always validates at the moment of joining.  It may happen that after applying a WHERE filter, the relevant rows are 1:1 but the entire table is not 1:1.   The validation would fail in this case.  You may be able to prefilter the tables before joining with a subquery.  If not, this is a more complex validation than the library is capable of.
+The library always validates at the moment of joining. It may happen that after applying a WHERE filter, the relevant rows are 1:1 but the entire table is not 1:1. The validation would fail in this case. You may be able to prefilter the tables before joining with a subquery. If not, this is a more complex validation than the library is capable of.
 
