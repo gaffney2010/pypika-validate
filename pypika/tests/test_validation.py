@@ -1,562 +1,553 @@
+"""Tests for pypika.validation module behavior.
+
+Tests use in-memory SQLite databases to verify validation behavior end-to-end,
+matching the scenarios demonstrated in validation-examples/.
+"""
+
+import sqlite3
 import unittest
-from unittest.mock import MagicMock, patch
 
-from pypika import Query, Table, Tables, JoinType
-
-# These imports will fail until the validation module is implemented
-# from pypika.validation import Validate, Status, Results, execute
+from pypika import Query, Table
+from pypika.validation import Validate, Status, execute
 
 
-class ValidateEnumTests(unittest.TestCase):
-    """Tests for the Validate enum and its flag combinations."""
+class ValidateFlagCombinationTests(unittest.TestCase):
+    """Validate flags should combine according to documented semantics."""
 
-    def test_validate_one_to_many_exists(self):
-        """ONE_TO_MANY flag should exist."""
-        from pypika.validation import Validate
+    def test_one_to_one_equals_one_to_many_and_many_to_one(self):
+        self.assertEqual(Validate.ONE_TO_ONE, Validate.ONE_TO_MANY | Validate.MANY_TO_ONE)
 
-        self.assertTrue(hasattr(Validate, "ONE_TO_MANY"))
+    def test_total_equals_left_total_and_right_total(self):
+        self.assertEqual(Validate.TOTAL, Validate.LEFT_TOTAL | Validate.RIGHT_TOTAL)
 
-    def test_validate_many_to_one_exists(self):
-        """MANY_TO_ONE flag should exist."""
-        from pypika.validation import Validate
+    def test_mandatory_equals_one_to_one_or_total(self):
+        self.assertEqual(Validate.MANDATORY, Validate.ONE_TO_ONE | Validate.TOTAL)
 
-        self.assertTrue(hasattr(Validate, "MANY_TO_ONE"))
-
-    def test_validate_one_to_one_exists(self):
-        """ONE_TO_ONE flag should exist."""
-        from pypika.validation import Validate
-
-        self.assertTrue(hasattr(Validate, "ONE_TO_ONE"))
-
-    def test_validate_right_total_exists(self):
-        """RIGHT_TOTAL flag should exist."""
-        from pypika.validation import Validate
-
-        self.assertTrue(hasattr(Validate, "RIGHT_TOTAL"))
-
-    def test_validate_left_total_exists(self):
-        """LEFT_TOTAL flag should exist."""
-        from pypika.validation import Validate
-
-        self.assertTrue(hasattr(Validate, "LEFT_TOTAL"))
-
-    def test_validate_total_exists(self):
-        """TOTAL flag should exist."""
-        from pypika.validation import Validate
-
-        self.assertTrue(hasattr(Validate, "TOTAL"))
-
-    def test_validate_mandatory_exists(self):
-        """MANDATORY flag should exist."""
-        from pypika.validation import Validate
-
-        self.assertTrue(hasattr(Validate, "MANDATORY"))
-
-    def test_combine_flags_with_or(self):
-        """Flags should be combinable with the | operator."""
-        from pypika.validation import Validate
-
+    def test_flags_can_be_combined_with_or_operator(self):
         combined = Validate.MANY_TO_ONE | Validate.RIGHT_TOTAL
         self.assertIsNotNone(combined)
 
-    def test_one_to_one_equals_both_directions(self):
-        """ONE_TO_ONE should be equivalent to ONE_TO_MANY | MANY_TO_ONE."""
-        from pypika.validation import Validate
 
-        combined = Validate.ONE_TO_MANY | Validate.MANY_TO_ONE
-        self.assertEqual(Validate.ONE_TO_ONE, combined)
+class SkipValidationTests(unittest.TestCase):
+    """skip_validation=True should bypass all checks and return NOT_VALIDATED."""
 
-    def test_total_equals_both_totals(self):
-        """TOTAL should be equivalent to LEFT_TOTAL | RIGHT_TOTAL."""
-        from pypika.validation import Validate
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.cursor = self.conn.cursor()
+        self.cursor.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+        self.cursor.execute("CREATE TABLE orders (id INTEGER, user_id INTEGER, total REAL)")
+        self.cursor.execute("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+        self.cursor.execute("INSERT INTO orders VALUES (1, 1, 100.0), (2, 1, 200.0), (3, 2, 150.0)")
+        self.users = Table("users")
+        self.orders = Table("orders")
 
-        combined = Validate.LEFT_TOTAL | Validate.RIGHT_TOTAL
-        self.assertEqual(Validate.TOTAL, combined)
+    def tearDown(self):
+        self.conn.close()
 
-    def test_mandatory_equals_one_to_one_and_total(self):
-        """MANDATORY should be equivalent to ONE_TO_ONE | TOTAL."""
-        from pypika.validation import Validate
-
-        combined = Validate.ONE_TO_ONE | Validate.TOTAL
-        self.assertEqual(Validate.MANDATORY, combined)
-
-
-class StatusEnumTests(unittest.TestCase):
-    """Tests for the Status enum."""
-
-    def test_status_ok_exists(self):
-        """OK status should exist."""
-        from pypika.validation import Status
-
-        self.assertTrue(hasattr(Status, "OK"))
-
-    def test_status_validation_error_exists(self):
-        """VALIDATION_ERROR status should exist."""
-        from pypika.validation import Status
-
-        self.assertTrue(hasattr(Status, "VALIDATION_ERROR"))
-
-    def test_status_sql_error_exists(self):
-        """SQL_ERROR status should exist."""
-        from pypika.validation import Status
-
-        self.assertTrue(hasattr(Status, "SQL_ERROR"))
-
-    def test_status_not_validated_exists(self):
-        """NOT_VALIDATED status should exist."""
-        from pypika.validation import Status
-
-        self.assertTrue(hasattr(Status, "NOT_VALIDATED"))
-
-
-class ResultsClassTests(unittest.TestCase):
-    """Tests for the Results class structure."""
-
-    def test_results_has_status_field(self):
-        """Results should have a status field."""
-        from pypika.validation import Results, Status
-
-        result = Results(status=Status.OK)
-        self.assertEqual(result.status, Status.OK)
-
-    def test_results_has_value_field(self):
-        """Results should have a value field."""
-        from pypika.validation import Results, Status
-
-        result = Results(status=Status.OK, value=[("row1",), ("row2",)])
-        self.assertEqual(result.value, [("row1",), ("row2",)])
-
-    def test_results_has_error_msg_field(self):
-        """Results should have an error_msg field."""
-        from pypika.validation import Results, Status
-
-        result = Results(status=Status.VALIDATION_ERROR, error_msg="Duplicate keys found")
-        self.assertEqual(result.error_msg, "Duplicate keys found")
-
-    def test_results_has_error_loc_field(self):
-        """Results should have an error_loc field."""
-        from pypika.validation import Results, Status
-
-        result = Results(status=Status.VALIDATION_ERROR, error_loc="users JOIN orders")
-        self.assertEqual(result.error_loc, "users JOIN orders")
-
-    def test_results_has_error_size_field(self):
-        """Results should have an error_size field."""
-        from pypika.validation import Results, Status
-
-        result = Results(status=Status.VALIDATION_ERROR, error_size=42)
-        self.assertEqual(result.error_size, 42)
-
-    def test_results_has_error_sample_field(self):
-        """Results should have an error_sample field (list of tuples)."""
-        from pypika.validation import Results, Status
-
-        sample = [(1, "a"), (2, "b"), (3, "c")]
-        result = Results(status=Status.VALIDATION_ERROR, error_sample=sample)
-        self.assertEqual(result.error_sample, sample)
-
-
-class JoinWithValidationTests(unittest.TestCase):
-    """Tests for adding validation flags to joins."""
-
-    table_a, table_b, table_c = Tables("a", "b", "c")
-
-    def test_join_accepts_validate_parameter(self):
-        """The join method should accept a validate parameter."""
-        from pypika.validation import Validate
-
+    def test_skip_validation_returns_not_validated_status(self):
         query = (
-            Query.from_(self.table_a)
-            .join(self.table_b, validate=Validate.ONE_TO_ONE)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
+            Query.from_(self.users)
+            .join(self.orders, validate=Validate.ONE_TO_MANY)
+            .on(self.users.id == self.orders.user_id)
+            .select(self.users.name, self.orders.total)
         )
-        self.assertIsNotNone(query)
-
-    def test_inner_join_accepts_validate_parameter(self):
-        """The inner_join method should accept a validate parameter."""
-        from pypika.validation import Validate
-
-        query = (
-            Query.from_(self.table_a)
-            .inner_join(self.table_b, validate=Validate.MANY_TO_ONE)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
-        )
-        self.assertIsNotNone(query)
-
-    def test_left_join_accepts_validate_parameter(self):
-        """The left_join method should accept a validate parameter."""
-        from pypika.validation import Validate
-
-        query = (
-            Query.from_(self.table_a)
-            .left_join(self.table_b, validate=Validate.ONE_TO_MANY)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
-        )
-        self.assertIsNotNone(query)
-
-    def test_join_with_combined_flags(self):
-        """Joins should accept combined validation flags."""
-        from pypika.validation import Validate
-
-        query = (
-            Query.from_(self.table_a)
-            .join(self.table_b, validate=Validate.MANY_TO_ONE | Validate.RIGHT_TOTAL)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
-        )
-        self.assertIsNotNone(query)
-
-    def test_multi_table_join_with_validation(self):
-        """Multiple joins should each be able to have their own validation."""
-        from pypika.validation import Validate
-
-        query = (
-            Query.from_(self.table_a)
-            .join(self.table_b, validate=Validate.ONE_TO_ONE)
-            .on(self.table_a.id == self.table_b.a_id)
-            .join(self.table_c, validate=Validate.TOTAL)
-            .on(self.table_b.id == self.table_c.b_id)
-            .select("*")
-        )
-        self.assertIsNotNone(query)
-
-    def test_query_stores_validation_info(self):
-        """Query should store validation info for later use by execute."""
-        from pypika.validation import Validate
-
-        query = (
-            Query.from_(self.table_a)
-            .join(self.table_b, validate=Validate.ONE_TO_ONE)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
-        )
-        # The query should have some way to access the validation info
-        # This could be a method or property - implementation will decide
-        self.assertTrue(hasattr(query, "get_validations") or hasattr(query, "_validations"))
-
-
-class ExecuteFunctionTests(unittest.TestCase):
-    """Tests for the execute function."""
-
-    table_a, table_b = Tables("a", "b")
-
-    def test_execute_returns_results(self):
-        """execute should return a Results object."""
-        from pypika.validation import execute, Results
-
-        cursor = MagicMock()
-        cursor.execute.return_value = None
-        cursor.fetchall.return_value = []
-
-        query = Query.from_(self.table_a).select("*")
-        result = execute(cursor, query)
-
-        self.assertIsInstance(result, Results)
-
-    def test_execute_with_skip_validation(self):
-        """execute with skip_validation=True should return NOT_VALIDATED status."""
-        from pypika.validation import execute, Status
-
-        cursor = MagicMock()
-        cursor.execute.return_value = None
-        cursor.fetchall.return_value = [("row1",)]
-
-        query = Query.from_(self.table_a).select("*")
-        result = execute(cursor, query, skip_validation=True)
-
+        result = execute(self.cursor, query, skip_validation=True)
         self.assertEqual(result.status, Status.NOT_VALIDATED)
 
-    def test_execute_runs_main_query(self):
-        """execute should run the main query on the cursor."""
-        from pypika.validation import execute
-
-        cursor = MagicMock()
-        cursor.execute.return_value = None
-        cursor.fetchall.return_value = []
-
-        query = Query.from_(self.table_a).select("*")
-        execute(cursor, query, skip_validation=True)
-
-        cursor.execute.assert_called()
-
-    def test_execute_returns_ok_on_success(self):
-        """execute should return OK status when query succeeds without validation errors."""
-        from pypika.validation import execute, Status
-
-        cursor = MagicMock()
-        cursor.execute.return_value = None
-        cursor.fetchall.return_value = [("row1",), ("row2",)]
-
-        query = Query.from_(self.table_a).select("*")
-        result = execute(cursor, query, skip_validation=True)
-
-        # With skip_validation, status is NOT_VALIDATED
-        # Without validation and with successful execution, status should be OK
-        self.assertIn(result.status, [Status.OK, Status.NOT_VALIDATED])
-
-
-class ValidationQueryGenerationTests(unittest.TestCase):
-    """Tests for generating validation SQL queries."""
-
-    table_a, table_b = Tables("a", "b")
-
-    def test_one_to_many_generates_check_query(self):
-        """ONE_TO_MANY validation should generate a query to check for duplicates on left."""
-        from pypika.validation import Validate, get_validation_queries
-
+    def test_skip_validation_still_returns_query_results(self):
         query = (
-            Query.from_(self.table_a)
-            .join(self.table_b, validate=Validate.ONE_TO_MANY)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
+            Query.from_(self.users)
+            .join(self.orders, validate=Validate.ONE_TO_MANY)
+            .on(self.users.id == self.orders.user_id)
+            .select(self.users.name, self.orders.total)
+        )
+        result = execute(self.cursor, query, skip_validation=True)
+        self.assertEqual(result.status, Status.NOT_VALIDATED)
+        self.assertIsNotNone(result.value)
+        self.assertGreater(len(result.value), 0)
+
+    def test_skip_validation_bypasses_checks_even_for_violating_data(self):
+        """Data that would fail validation returns NOT_VALIDATED when skipped."""
+        self.cursor.execute("CREATE TABLE profiles (id INTEGER, user_id INTEGER, bio TEXT)")
+        # user_id=1 is duplicated, would fail ONE_TO_ONE
+        self.cursor.execute("INSERT INTO profiles VALUES (1, 1, 'p1'), (2, 1, 'p2'), (3, 2, 'p3')")
+        profiles = Table("profiles")
+        query = (
+            Query.from_(self.users)
+            .join(profiles, validate=Validate.ONE_TO_ONE)
+            .on(self.users.id == profiles.user_id)
+            .select(self.users.name, profiles.bio)
+        )
+        result = execute(self.cursor, query, skip_validation=True)
+        self.assertEqual(result.status, Status.NOT_VALIDATED)
+
+
+class OneToOneTests(unittest.TestCase):
+    """ONE_TO_ONE requires unique join keys on both left and right sides."""
+
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.cursor = self.conn.cursor()
+        self.cursor.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+        self.cursor.execute("CREATE TABLE profiles (id INTEGER PRIMARY KEY, user_id INTEGER, bio TEXT)")
+        self.users = Table("users")
+        self.profiles = Table("profiles")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _query(self):
+        return (
+            Query.from_(self.users)
+            .join(self.profiles, validate=Validate.ONE_TO_ONE)
+            .on(self.users.id == self.profiles.user_id)
+            .select(self.users.name, self.profiles.bio)
         )
 
-        validation_queries = get_validation_queries(query)
-        self.assertGreater(len(validation_queries), 0)
+    def test_passes_with_clean_one_to_one_data(self):
+        self.cursor.execute("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+        self.cursor.execute("INSERT INTO profiles VALUES (1, 1, 'Alice bio'), (2, 2, 'Bob bio')")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.OK)
 
-        # The validation query should check for duplicate keys on the left table
-        validation_sql = validation_queries[0].get_sql()
-        self.assertIn("GROUP BY", validation_sql)
-        self.assertIn("HAVING", validation_sql)
-        self.assertIn("COUNT", validation_sql)
+    def test_ok_result_contains_query_rows(self):
+        self.cursor.execute("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+        self.cursor.execute("INSERT INTO profiles VALUES (1, 1, 'Alice bio'), (2, 2, 'Bob bio')")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.OK)
+        self.assertIsNotNone(result.value)
+        self.assertEqual(len(result.value), 2)
 
-    def test_many_to_one_generates_check_query(self):
-        """MANY_TO_ONE validation should generate a query to check for duplicates on right."""
-        from pypika.validation import Validate, get_validation_queries
-
-        query = (
-            Query.from_(self.table_a)
-            .join(self.table_b, validate=Validate.MANY_TO_ONE)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
-        )
-
-        validation_queries = get_validation_queries(query)
-        self.assertGreater(len(validation_queries), 0)
-
-    def test_one_to_one_generates_two_check_queries(self):
-        """ONE_TO_ONE validation should generate queries for both directions."""
-        from pypika.validation import Validate, get_validation_queries
-
-        query = (
-            Query.from_(self.table_a)
-            .join(self.table_b, validate=Validate.ONE_TO_ONE)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
-        )
-
-        validation_queries = get_validation_queries(query)
-        # Should have at least 2 queries: one for each direction
-        self.assertGreaterEqual(len(validation_queries), 2)
-
-    def test_left_total_generates_coverage_check(self):
-        """LEFT_TOTAL should check that all left rows have matches."""
-        from pypika.validation import Validate, get_validation_queries
-
-        query = (
-            Query.from_(self.table_a)
-            .join(self.table_b, validate=Validate.LEFT_TOTAL)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
-        )
-
-        validation_queries = get_validation_queries(query)
-        self.assertGreater(len(validation_queries), 0)
-
-        # Should check for left rows without matches
-        validation_sql = validation_queries[0].get_sql()
-        self.assertIn("NOT IN", validation_sql.upper())
-
-    def test_right_total_generates_coverage_check(self):
-        """RIGHT_TOTAL should check that all right rows have matches."""
-        from pypika.validation import Validate, get_validation_queries
-
-        query = (
-            Query.from_(self.table_a)
-            .join(self.table_b, validate=Validate.RIGHT_TOTAL)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
-        )
-
-        validation_queries = get_validation_queries(query)
-        self.assertGreater(len(validation_queries), 0)
-
-
-class ValidationExecutionTests(unittest.TestCase):
-    """Tests for validation execution behavior."""
-
-    table_a, table_b = Tables("a", "b")
-
-    def test_validation_failure_prevents_main_query(self):
-        """If validation fails, the main query should not execute."""
-        from pypika.validation import Validate, execute, Status
-
-        cursor = MagicMock()
-        # Simulate validation query returning rows (indicating duplicates)
-        cursor.fetchall.side_effect = [
-            [(1, "dup1"), (2, "dup2")],  # Validation query returns violations
-        ]
-        cursor.fetchone.return_value = (2,)  # Count of violations
-
-        query = (
-            Query.from_(self.table_a)
-            .join(self.table_b, validate=Validate.ONE_TO_ONE)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
-        )
-
-        result = execute(cursor, query)
-
+    def test_fails_when_right_side_has_duplicate_join_key(self):
+        """Alice having two profiles violates ONE_TO_ONE."""
+        self.cursor.execute("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+        self.cursor.execute("INSERT INTO profiles VALUES (1, 1, 'p1'), (2, 1, 'p2'), (3, 2, 'p3')")
+        result = execute(self.cursor, self._query())
         self.assertEqual(result.status, Status.VALIDATION_ERROR)
 
-    def test_validation_error_includes_sample(self):
-        """Validation errors should include a sample of failing rows."""
-        from pypika.validation import Validate, execute, Status
+    def test_failure_provides_error_message(self):
+        self.cursor.execute("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+        self.cursor.execute("INSERT INTO profiles VALUES (1, 1, 'p1'), (2, 1, 'p2'), (3, 2, 'p3')")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+        self.assertIsNotNone(result.error_msg)
+        self.assertGreater(len(result.error_msg), 0)
 
-        cursor = MagicMock()
-        # Simulate validation failure
-        cursor.fetchall.side_effect = [
-            [(1, "a"), (2, "b"), (3, "c")],  # Sample of failing rows
-        ]
-        cursor.fetchone.return_value = (3,)
+    def test_failure_provides_error_location(self):
+        self.cursor.execute("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+        self.cursor.execute("INSERT INTO profiles VALUES (1, 1, 'p1'), (2, 1, 'p2'), (3, 2, 'p3')")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+        self.assertIsNotNone(result.error_loc)
 
+    def test_failure_provides_violation_count(self):
+        self.cursor.execute("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+        self.cursor.execute("INSERT INTO profiles VALUES (1, 1, 'p1'), (2, 1, 'p2'), (3, 2, 'p3')")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+        self.assertIsNotNone(result.error_size)
+        self.assertGreater(result.error_size, 0)
+
+    def test_failure_provides_sample_of_failing_rows(self):
+        self.cursor.execute("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+        self.cursor.execute("INSERT INTO profiles VALUES (1, 1, 'p1'), (2, 1, 'p2'), (3, 2, 'p3')")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+        self.assertIsNotNone(result.error_sample)
+        self.assertGreater(len(result.error_sample), 0)
+
+    def test_error_sample_capped_at_ten_rows(self):
+        """error_sample should contain at most 10 rows regardless of violation count."""
+        self.cursor.execute(
+            "INSERT INTO users VALUES " + ", ".join(f"({i}, 'User{i}')" for i in range(1, 22))
+        )
+        # All 21 profiles share user_id=1, generating many violations
+        self.cursor.execute(
+            "INSERT INTO profiles VALUES " + ", ".join(f"({i}, 1, 'bio{i}')" for i in range(1, 22))
+        )
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+        self.assertLessEqual(len(result.error_sample), 10)
+
+
+class ManyToOneTests(unittest.TestCase):
+    """MANY_TO_ONE requires unique join keys on the right side only."""
+
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.cursor = self.conn.cursor()
+        self.orders = Table("orders")
+        self.customers = Table("customers")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_passes_when_right_key_is_unique(self):
+        """Many orders can reference the same customer; customer IDs must be unique."""
+        self.cursor.execute("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT)")
+        self.cursor.execute("CREATE TABLE orders (order_id INTEGER, customer_id INTEGER, amount REAL)")
+        self.cursor.execute("INSERT INTO customers VALUES (1, 'Acme Corp'), (2, 'Globex Inc')")
+        self.cursor.execute("INSERT INTO orders VALUES (101, 1, 500.0), (102, 1, 750.0), (103, 2, 1200.0)")
         query = (
-            Query.from_(self.table_a)
-            .join(self.table_b, validate=Validate.ONE_TO_ONE)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
+            Query.from_(self.orders)
+            .join(self.customers, validate=Validate.MANY_TO_ONE)
+            .on(self.orders.customer_id == self.customers.id)
+            .select(self.orders.order_id, self.customers.name)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.OK)
+
+    def test_fails_when_right_key_has_duplicates(self):
+        """Duplicate customer IDs cause MANY_TO_ONE to fail."""
+        self.cursor.execute("CREATE TABLE customers (id INTEGER, name TEXT)")
+        self.cursor.execute("CREATE TABLE orders (order_id INTEGER, customer_id INTEGER, amount REAL)")
+        self.cursor.execute("INSERT INTO customers VALUES (1, 'Acme Corp'), (1, 'Acme Duplicate')")
+        self.cursor.execute("INSERT INTO orders VALUES (101, 1, 500.0)")
+        query = (
+            Query.from_(self.orders)
+            .join(self.customers, validate=Validate.MANY_TO_ONE)
+            .on(self.orders.customer_id == self.customers.id)
+            .select(self.orders.order_id, self.customers.name)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+
+    def test_passes_when_many_left_rows_share_same_right_row(self):
+        """Multiple profiles per user is fine for MANY_TO_ONE profiles->users."""
+        self.cursor.execute("CREATE TABLE profiles (id INTEGER, user_id INTEGER, bio TEXT)")
+        self.cursor.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+        self.cursor.execute("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+        # Alice has 2 profiles - fine for MANY_TO_ONE since users.id is still unique
+        self.cursor.execute("INSERT INTO profiles VALUES (1, 1, 'p1'), (2, 1, 'p2'), (3, 2, 'p3')")
+        profiles = Table("profiles")
+        users = Table("users")
+        query = (
+            Query.from_(profiles)
+            .join(users, validate=Validate.MANY_TO_ONE)
+            .on(profiles.user_id == users.id)
+            .select(profiles.bio, users.name)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.OK)
+
+
+class OneToManyTests(unittest.TestCase):
+    """ONE_TO_MANY requires unique join keys on the left side only."""
+
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.cursor = self.conn.cursor()
+        self.cursor.execute("CREATE TABLE orders (id INTEGER, customer_name TEXT)")
+        self.cursor.execute("CREATE TABLE order_items (id INTEGER, order_id INTEGER, product TEXT)")
+        self.orders = Table("orders")
+        self.order_items = Table("order_items")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _query(self):
+        return (
+            Query.from_(self.orders)
+            .join(self.order_items, validate=Validate.ONE_TO_MANY)
+            .on(self.orders.id == self.order_items.order_id)
+            .select(self.orders.id, self.order_items.product)
         )
 
-        result = execute(cursor, query)
+    def test_passes_when_left_key_is_unique(self):
+        """One order can have many items; order IDs must be unique."""
+        self.cursor.execute("INSERT INTO orders VALUES (1, 'Alice'), (2, 'Bob')")
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 'Widget'), (2, 1, 'Gadget'), (3, 2, 'Gizmo')")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.OK)
 
-        if result.status == Status.VALIDATION_ERROR:
-            self.assertIsNotNone(result.error_sample)
-            self.assertLessEqual(len(result.error_sample), 10)
+    def test_fails_when_left_key_has_duplicates(self):
+        """Duplicate order IDs cause ONE_TO_MANY to fail."""
+        self.cursor.execute("INSERT INTO orders VALUES (1, 'Alice'), (1, 'Alice Dup')")
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 'Widget')")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
 
-    def test_validation_error_includes_count(self):
-        """Validation errors should include the count of failing rows."""
-        from pypika.validation import Validate, execute, Status
 
-        cursor = MagicMock()
-        cursor.fetchall.side_effect = [
-            [(1,), (2,), (3,)],
-        ]
-        cursor.fetchone.return_value = (100,)  # 100 total failing rows
+class LeftTotalTests(unittest.TestCase):
+    """LEFT_TOTAL requires every left-side row to have at least one match on the right."""
 
-        query = (
-            Query.from_(self.table_a)
-            .join(self.table_b, validate=Validate.ONE_TO_ONE)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.cursor = self.conn.cursor()
+        self.cursor.execute("CREATE TABLE employees (id INTEGER, name TEXT, dept_id INTEGER)")
+        self.cursor.execute("CREATE TABLE departments (id INTEGER PRIMARY KEY, dept_name TEXT)")
+        self.employees = Table("employees")
+        self.departments = Table("departments")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _query(self):
+        return (
+            Query.from_(self.employees)
+            .join(self.departments, validate=Validate.LEFT_TOTAL)
+            .on(self.employees.dept_id == self.departments.id)
+            .select(self.employees.name, self.departments.dept_name)
         )
 
-        result = execute(cursor, query)
+    def test_passes_when_all_left_rows_have_matches(self):
+        """Every employee belongs to an existing department."""
+        self.cursor.execute("INSERT INTO departments VALUES (1, 'Engineering'), (2, 'Sales')")
+        self.cursor.execute("INSERT INTO employees VALUES (1, 'Alice', 1), (2, 'Bob', 1), (3, 'Carol', 2)")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.OK)
 
-        if result.status == Status.VALIDATION_ERROR:
-            self.assertEqual(result.error_size, 100)
+    def test_fails_when_left_row_has_no_match(self):
+        """An employee with an invalid dept_id causes LEFT_TOTAL to fail."""
+        self.cursor.execute("INSERT INTO departments VALUES (1, 'Engineering'), (2, 'Sales')")
+        self.cursor.execute("INSERT INTO employees VALUES (1, 'Alice', 1), (2, 'Bob', 99)")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+
+
+class RightTotalTests(unittest.TestCase):
+    """RIGHT_TOTAL requires every right-side row to have at least one match on the left."""
+
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.cursor = self.conn.cursor()
+        self.cursor.execute("CREATE TABLE employees (id INTEGER, name TEXT, dept_id INTEGER)")
+        self.cursor.execute("CREATE TABLE departments (id INTEGER PRIMARY KEY, dept_name TEXT)")
+        self.employees = Table("employees")
+        self.departments = Table("departments")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _query(self):
+        return (
+            Query.from_(self.employees)
+            .join(self.departments, validate=Validate.RIGHT_TOTAL)
+            .on(self.employees.dept_id == self.departments.id)
+            .select(self.employees.name, self.departments.dept_name)
+        )
+
+    def test_passes_when_all_right_rows_have_matches(self):
+        """Every department has at least one employee."""
+        self.cursor.execute("INSERT INTO departments VALUES (1, 'Engineering'), (2, 'Sales')")
+        self.cursor.execute("INSERT INTO employees VALUES (1, 'Alice', 1), (2, 'Bob', 2)")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.OK)
+
+    def test_fails_when_right_row_has_no_match(self):
+        """HR department with no employees causes RIGHT_TOTAL to fail."""
+        self.cursor.execute("INSERT INTO departments VALUES (1, 'Engineering'), (2, 'Sales'), (3, 'HR')")
+        self.cursor.execute("INSERT INTO employees VALUES (1, 'Alice', 1), (2, 'Bob', 1), (3, 'Carol', 2)")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+
+    def test_failure_reports_count_and_sample_of_unmatched_rows(self):
+        self.cursor.execute("INSERT INTO departments VALUES (1, 'Engineering'), (2, 'Sales'), (3, 'HR')")
+        self.cursor.execute("INSERT INTO employees VALUES (1, 'Alice', 1), (2, 'Bob', 1), (3, 'Carol', 2)")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+        self.assertGreater(result.error_size, 0)
+        self.assertIsNotNone(result.error_sample)
+        self.assertGreater(len(result.error_sample), 0)
+
+
+class TotalTests(unittest.TestCase):
+    """TOTAL requires full coverage in both directions (LEFT_TOTAL and RIGHT_TOTAL)."""
+
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.cursor = self.conn.cursor()
+        self.cursor.execute("CREATE TABLE employees (id INTEGER, name TEXT, dept_id INTEGER)")
+        self.cursor.execute("CREATE TABLE departments (id INTEGER PRIMARY KEY, dept_name TEXT)")
+        self.employees = Table("employees")
+        self.departments = Table("departments")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _query(self):
+        return (
+            Query.from_(self.employees)
+            .join(self.departments, validate=Validate.TOTAL)
+            .on(self.employees.dept_id == self.departments.id)
+            .select(self.employees.name, self.departments.dept_name)
+        )
+
+    def test_passes_when_both_sides_fully_covered(self):
+        self.cursor.execute("INSERT INTO departments VALUES (1, 'Engineering'), (2, 'Sales')")
+        self.cursor.execute("INSERT INTO employees VALUES (1, 'Alice', 1), (2, 'Bob', 2)")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.OK)
+
+    def test_fails_when_right_side_not_covered(self):
+        """A department with no employees fails TOTAL."""
+        self.cursor.execute("INSERT INTO departments VALUES (1, 'Engineering'), (2, 'Sales'), (3, 'HR')")
+        self.cursor.execute("INSERT INTO employees VALUES (1, 'Alice', 1), (2, 'Bob', 1), (3, 'Carol', 2)")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+
+    def test_fails_when_left_side_not_covered(self):
+        """An employee with no department fails TOTAL."""
+        self.cursor.execute("INSERT INTO departments VALUES (1, 'Engineering'), (2, 'Sales')")
+        self.cursor.execute("INSERT INTO employees VALUES (1, 'Alice', 1), (2, 'Bob', 99)")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+
+
+class CombinedFlagTests(unittest.TestCase):
+    """Combined flags enforce all constituent constraints simultaneously."""
+
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.cursor = self.conn.cursor()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_many_to_one_or_right_total_passes_with_valid_data(self):
+        """Products-categories: each product has one category, every category has products."""
+        self.cursor.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, category_id INTEGER)")
+        self.cursor.execute("CREATE TABLE categories (id INTEGER PRIMARY KEY, category_name TEXT)")
+        self.cursor.execute("INSERT INTO categories VALUES (1, 'Electronics'), (2, 'Clothing')")
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Laptop', 1), (2, 'Phone', 1), (3, 'Shirt', 2)")
+        products = Table("products")
+        categories = Table("categories")
+        query = (
+            Query.from_(products)
+            .join(categories, validate=Validate.MANY_TO_ONE | Validate.RIGHT_TOTAL)
+            .on(products.category_id == categories.id)
+            .select(products.name, categories.category_name)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.OK)
+
+    def test_many_to_one_or_right_total_fails_when_category_has_no_products(self):
+        """An empty category violates RIGHT_TOTAL."""
+        self.cursor.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, category_id INTEGER)")
+        self.cursor.execute("CREATE TABLE categories (id INTEGER PRIMARY KEY, category_name TEXT)")
+        self.cursor.execute("INSERT INTO categories VALUES (1, 'Electronics'), (2, 'Clothing'), (3, 'Empty')")
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Laptop', 1), (2, 'Phone', 1), (3, 'Shirt', 2)")
+        products = Table("products")
+        categories = Table("categories")
+        query = (
+            Query.from_(products)
+            .join(categories, validate=Validate.MANY_TO_ONE | Validate.RIGHT_TOTAL)
+            .on(products.category_id == categories.id)
+            .select(products.name, categories.category_name)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+
+    def test_mandatory_passes_when_join_is_fully_bijective(self):
+        """MANDATORY (ONE_TO_ONE | TOTAL): every product has exactly one price."""
+        self.cursor.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT)")
+        self.cursor.execute("CREATE TABLE prices (id INTEGER PRIMARY KEY, product_id INTEGER, amount REAL)")
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Laptop'), (2, 'Phone'), (3, 'Shirt')")
+        self.cursor.execute("INSERT INTO prices VALUES (1, 1, 999.99), (2, 2, 599.99), (3, 3, 29.99)")
+        products = Table("products")
+        prices = Table("prices")
+        query = (
+            Query.from_(products)
+            .join(prices, validate=Validate.MANDATORY)
+            .on(products.id == prices.product_id)
+            .select(products.name, prices.amount)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.OK)
+
+    def test_mandatory_fails_when_product_has_no_price(self):
+        """A product without a price violates MANDATORY (LEFT_TOTAL component)."""
+        self.cursor.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT)")
+        self.cursor.execute("CREATE TABLE prices (id INTEGER PRIMARY KEY, product_id INTEGER, amount REAL)")
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Laptop'), (2, 'Phone'), (3, 'Unpriceable')")
+        self.cursor.execute("INSERT INTO prices VALUES (1, 1, 999.99), (2, 2, 599.99)")
+        products = Table("products")
+        prices = Table("prices")
+        query = (
+            Query.from_(products)
+            .join(prices, validate=Validate.MANDATORY)
+            .on(products.id == prices.product_id)
+            .select(products.name, prices.amount)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+
+
+class SqlErrorTests(unittest.TestCase):
+    """SQL errors during execution should return SQL_ERROR status."""
 
     def test_sql_error_returns_sql_error_status(self):
-        """SQL errors should return SQL_ERROR status."""
-        from pypika.validation import execute, Status
-
-        cursor = MagicMock()
-        cursor.execute.side_effect = Exception("Database connection lost")
-
-        query = Query.from_(self.table_a).select("*")
-
+        """Querying a non-existent table should yield SQL_ERROR."""
+        conn = sqlite3.connect(":memory:")
+        cursor = conn.cursor()
+        nonexistent = Table("nonexistent_table")
+        query = Query.from_(nonexistent).select("*")
         result = execute(cursor, query, skip_validation=True)
-
         self.assertEqual(result.status, Status.SQL_ERROR)
+        conn.close()
+
+    def test_sql_error_provides_error_message(self):
+        conn = sqlite3.connect(":memory:")
+        cursor = conn.cursor()
+        nonexistent = Table("nonexistent_table")
+        query = Query.from_(nonexistent).select("*")
+        result = execute(cursor, query, skip_validation=True)
+        self.assertEqual(result.status, Status.SQL_ERROR)
+        self.assertIsNotNone(result.error_msg)
+        conn.close()
 
 
-class MultiTableValidationTests(unittest.TestCase):
-    """Tests for validation with multiple joined tables."""
+class MultiTableJoinTests(unittest.TestCase):
+    """Multi-table join validations are evaluated left-to-right."""
 
-    table_x, table_y, table_z = Tables("x", "y", "z")
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.cursor = self.conn.cursor()
+        self.cursor.execute("CREATE TABLE orders (id INTEGER, customer_name TEXT)")
+        self.cursor.execute(
+            "CREATE TABLE order_items (id INTEGER, order_id INTEGER, product_id INTEGER, quantity INTEGER)"
+        )
+        self.cursor.execute("CREATE TABLE products (id INTEGER, name TEXT, price REAL)")
+        self.orders = Table("orders")
+        self.order_items = Table("order_items")
+        self.products = Table("products")
 
-    def test_multi_join_validates_left_to_right(self):
-        """Validations should be evaluated left-to-right."""
-        from pypika.validation import Validate, get_validation_queries
+    def tearDown(self):
+        self.conn.close()
 
-        query = (
-            Query.from_(self.table_x)
-            .join(self.table_y, validate=Validate.ONE_TO_ONE)
-            .on(self.table_x.id == self.table_y.x_id)
-            .join(self.table_z, validate=Validate.TOTAL)
-            .on(self.table_y.id == self.table_z.y_id)
-            .select("*")
+    def _query(self):
+        return (
+            Query.from_(self.orders)
+            .join(self.order_items, validate=Validate.ONE_TO_MANY)
+            .on(self.orders.id == self.order_items.order_id)
+            .join(self.products, validate=Validate.MANY_TO_ONE)
+            .on(self.order_items.product_id == self.products.id)
+            .select(self.orders.id, self.order_items.quantity, self.products.name, self.products.price)
         )
 
-        validation_queries = get_validation_queries(query)
+    def test_passes_when_all_joins_are_valid(self):
+        self.cursor.execute("INSERT INTO orders VALUES (1, 'Alice'), (2, 'Bob')")
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Widget', 9.99), (2, 'Gadget', 19.99), (3, 'Gizmo', 29.99)")
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 1, 2), (2, 1, 2, 1), (3, 2, 1, 5), (4, 2, 3, 1)")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.OK)
 
-        # Should have validation queries for both joins
-        # First set validates x JOIN y
-        # Second set validates (x JOIN y) JOIN z
-        self.assertGreater(len(validation_queries), 0)
+    def test_fails_when_first_join_violates_its_validation(self):
+        """Duplicate order IDs fail the ONE_TO_MANY check on the first join."""
+        self.cursor.execute("INSERT INTO orders VALUES (1, 'Alice'), (1, 'Alice Dup')")
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Widget', 9.99)")
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 1, 2)")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
 
-    def test_second_join_validates_against_combined_result(self):
-        """The second join's validation should consider the first join's result."""
-        from pypika.validation import Validate, get_validation_queries
-
-        query = (
-            Query.from_(self.table_x)
-            .join(self.table_y, validate=Validate.ONE_TO_ONE)
-            .on(self.table_x.id == self.table_y.x_id)
-            .join(self.table_z, validate=Validate.MANY_TO_ONE)
-            .on(self.table_y.id == self.table_z.y_id)
-            .select("*")
-        )
-
-        validation_queries = get_validation_queries(query)
-
-        # The validation for z should be checking against (x JOIN y), not just y
-        # This is a semantic test - the exact implementation may vary
-        self.assertGreater(len(validation_queries), 0)
-
-
-class ValidationWithDifferentJoinTypesTests(unittest.TestCase):
-    """Tests for validation with different join types."""
-
-    table_a, table_b = Tables("a", "b")
-
-    def test_left_join_with_validation(self):
-        """LEFT JOIN should support validation."""
-        from pypika.validation import Validate
-
-        query = (
-            Query.from_(self.table_a)
-            .left_join(self.table_b, validate=Validate.MANY_TO_ONE)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
-        )
-        self.assertIsNotNone(query)
-
-    def test_right_join_with_validation(self):
-        """RIGHT JOIN should support validation."""
-        from pypika.validation import Validate
-
-        query = (
-            Query.from_(self.table_a)
-            .right_join(self.table_b, validate=Validate.ONE_TO_MANY)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
-        )
-        self.assertIsNotNone(query)
-
-    def test_outer_join_with_validation(self):
-        """OUTER JOIN should support validation."""
-        from pypika.validation import Validate
-
-        query = (
-            Query.from_(self.table_a)
-            .outer_join(self.table_b, validate=Validate.ONE_TO_ONE)
-            .on(self.table_a.id == self.table_b.a_id)
-            .select("*")
-        )
-        self.assertIsNotNone(query)
+    def test_fails_when_second_join_violates_its_validation(self):
+        """Duplicate product IDs fail the MANY_TO_ONE check on the second join."""
+        self.cursor.execute("INSERT INTO orders VALUES (1, 'Alice'), (2, 'Bob')")
+        # products.id=1 is duplicated; violates MANY_TO_ONE on order_items->products
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Widget', 9.99), (1, 'Widget Dup', 9.99)")
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 1, 2), (2, 2, 1, 1)")
+        result = execute(self.cursor, self._query())
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
 
 
 if __name__ == "__main__":
