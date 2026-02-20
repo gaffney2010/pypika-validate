@@ -1041,50 +1041,53 @@ class QueryBuilder(Selectable, Term):
 
     @builder
     def join(
-        self, item: Table | QueryBuilder | AliasedQuery | Selectable, how: JoinType = JoinType.inner
+        self,
+        item: Table | QueryBuilder | AliasedQuery | Selectable,
+        how: JoinType = JoinType.inner,
+        validate: Any = None,
     ) -> Joiner[Self]:
         if isinstance(item, Table):
-            return Joiner(self, item, how, type_label="table")
+            return Joiner(self, item, how, type_label="table", validate=validate)
 
         elif isinstance(item, QueryBuilder):
             if item.alias is None:
                 self._tag_subquery(item)
-            return Joiner(self, item, how, type_label="subquery")
+            return Joiner(self, item, how, type_label="subquery", validate=validate)
 
         elif isinstance(item, AliasedQuery):
-            return Joiner(self, item, how, type_label="table")
+            return Joiner(self, item, how, type_label="table", validate=validate)
 
         elif isinstance(item, Selectable):
-            return Joiner(self, item, how, type_label="subquery")
+            return Joiner(self, item, how, type_label="subquery", validate=validate)
 
         raise ValueError("Cannot join on type '%s'" % type(item))
 
-    def inner_join(self, item: Table | QueryBuilder | AliasedQuery) -> Joiner[Self]:
-        return self.join(item, JoinType.inner)
+    def inner_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+        return self.join(item, JoinType.inner, validate=validate)
 
-    def left_join(self, item: Table | QueryBuilder | AliasedQuery) -> Joiner[Self]:
-        return self.join(item, JoinType.left)
+    def left_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+        return self.join(item, JoinType.left, validate=validate)
 
-    def left_outer_join(self, item: Table | QueryBuilder | AliasedQuery) -> Joiner[Self]:
-        return self.join(item, JoinType.left_outer)
+    def left_outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+        return self.join(item, JoinType.left_outer, validate=validate)
 
-    def right_join(self, item: Table | QueryBuilder | AliasedQuery) -> Joiner[Self]:
-        return self.join(item, JoinType.right)
+    def right_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+        return self.join(item, JoinType.right, validate=validate)
 
-    def right_outer_join(self, item: Table | QueryBuilder | AliasedQuery) -> Joiner[Self]:
-        return self.join(item, JoinType.right_outer)
+    def right_outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+        return self.join(item, JoinType.right_outer, validate=validate)
 
-    def outer_join(self, item: Table | QueryBuilder | AliasedQuery) -> Joiner[Self]:
-        return self.join(item, JoinType.outer)
+    def outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+        return self.join(item, JoinType.outer, validate=validate)
 
-    def full_outer_join(self, item: Table | QueryBuilder | AliasedQuery) -> Joiner[Self]:
-        return self.join(item, JoinType.full_outer)
+    def full_outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+        return self.join(item, JoinType.full_outer, validate=validate)
 
-    def cross_join(self, item: Table | QueryBuilder | AliasedQuery) -> Joiner[Self]:
-        return self.join(item, JoinType.cross)
+    def cross_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+        return self.join(item, JoinType.cross, validate=validate)
 
-    def hash_join(self, item: Table | QueryBuilder | AliasedQuery) -> Joiner[Self]:
-        return self.join(item, JoinType.hash)
+    def hash_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Any = None) -> Joiner[Self]:
+        return self.join(item, JoinType.hash, validate=validate)
 
     @builder
     def limit(self, limit: int) -> None:
@@ -1626,11 +1629,19 @@ class QueryBuilder(Selectable, Term):
 
 
 class Joiner(Generic[QB]):
-    def __init__(self, query: QB, item: Table | QueryBuilder | AliasedQuery, how: JoinType, type_label: str) -> None:
+    def __init__(
+        self,
+        query: QB,
+        item: Table | QueryBuilder | AliasedQuery,
+        how: JoinType,
+        type_label: str,
+        validate: Any = None,
+    ) -> None:
         self.query = query
         self.item = item
         self.how = how
         self.type_label = type_label
+        self.validate = validate
 
     def on(self, criterion: Criterion | None, collate: str | None = None) -> QB:
         if criterion is None:
@@ -1639,7 +1650,7 @@ class Joiner(Generic[QB]):
                 "{type} JOIN but was not supplied.".format(type=self.type_label)
             )
 
-        self.query.do_join(JoinOn(self.item, self.how, criterion, collate))
+        self.query.do_join(JoinOn(self.item, self.how, criterion, collate, validate=self.validate))
         return self.query
 
     def on_field(self, *fields: Any) -> QB:
@@ -1653,7 +1664,7 @@ class Joiner(Generic[QB]):
             constituent = Field(field, table=self.query._from[0]) == Field(field, table=self.item)
             criterion = constituent if criterion is None else criterion & constituent
 
-        self.query.do_join(JoinOn(self.item, self.how, criterion))
+        self.query.do_join(JoinOn(self.item, self.how, criterion, validate=self.validate))  # noqa: no collate
         return self.query
 
     def using(self, *fields: Any) -> QB:
@@ -1704,10 +1715,13 @@ class Join:
 
 
 class JoinOn(Join):
-    def __init__(self, item: Term, how: JoinType, criteria: QueryBuilder, collate: str | None = None) -> None:
+    def __init__(
+        self, item: Term, how: JoinType, criteria: QueryBuilder, collate: str | None = None, validate: Any = None
+    ) -> None:
         super().__init__(item, how)
         self.criterion = criteria
         self.collate = collate
+        self.validation = validate
 
     def get_sql(self, **kwargs: Any) -> str:
         join_sql = super().get_sql(**kwargs)
