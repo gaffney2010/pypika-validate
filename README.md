@@ -2,6 +2,8 @@
 
 This is a fork of pypika, with some new semantics for validating joins.
 
+The motivation for the library is an observation that almost all SQL errors are the result of unintended join effects.  By adding validations, we can easily make our checks explicit in debug settings, while documenting expectations for improved readability.  Though there is some performance hit to do the additional checks, it's our experience that the gains in reliability and engineering time are worth the trade-off.
+
 ## Validation Semantics
 
 A `validation` flag may be passed to any of the `join` functions of pypika.  For example:
@@ -79,6 +81,8 @@ Will first check that the join of x and y is 1:1.  Then it will check that the j
 ## Internals
 
 `execute` uses a validate-then-execute pattern.  If validation fails, then the execution step will not proceed.  The `Results` class contains the number of errant rows AND a sample of 10 of the errant rows; these are calculated with separate SQL queries.
+
+The validate-then-execute pattern does not provide any atomicity guarantees.  It may happen that between validating and executing, the underlying table has changed so that it no longer satisfies the validation constraint.
 
 `execute` takes a "cursor" and returns "value" as a field on `Results`.  The types of these will depend on SQL engine, but we will make pseudotypes `pCursor = Any` and `pValue = Any`.
 
