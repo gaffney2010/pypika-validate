@@ -550,5 +550,121 @@ class MultiTableJoinTests(unittest.TestCase):
         self.assertEqual(result.status, Status.VALIDATION_ERROR)
 
 
+class CompositeKeyJoinTests(unittest.TestCase):
+    """
+    Joins on composite (multi-column) ON clauses.
+
+    A key motivation: sku=1 can appear under multiple categories without
+    violating MANY_TO_ONE — but a column-level uniqueness check would
+    incorrectly flag it.  The correlated-subquery approach uses the full
+    ON criterion and therefore handles composite keys correctly.
+    """
+
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.cursor = self.conn.cursor()
+        # Products keyed by (category, sku); prices likewise.
+        self.cursor.execute("CREATE TABLE products (category TEXT, sku INTEGER, name TEXT)")
+        self.cursor.execute("CREATE TABLE prices (category TEXT, sku INTEGER, price REAL)")
+        self.products = Table("products")
+        self.prices = Table("prices")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _query(self, flag):
+        return (
+            Query.from_(self.products)
+            .join(self.prices, validate=flag)
+            .on((self.products.category == self.prices.category) & (self.products.sku == self.prices.sku))
+            .select(self.products.name, self.prices.price)
+        )
+
+    def test_many_to_one_passes_with_unique_composite_key(self):
+        """Each (category, sku) pair appears once in prices."""
+        self.cursor.execute(
+            "INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('electronics', 2, 'Tablet'), ('books', 1, 'Novel')"
+        )
+        self.cursor.execute(
+            "INSERT INTO prices VALUES ('electronics', 1, 999.0), ('electronics', 2, 599.0), ('books', 1, 19.99)"
+        )
+        result = execute(self.cursor, self._query(Validate.MANY_TO_ONE))
+        self.assertEqual(result.status, Status.OK)
+
+    def test_many_to_one_fails_when_composite_key_has_duplicates(self):
+        """Two price rows with the same (category, sku) cause MANY_TO_ONE to fail."""
+        self.cursor.execute("INSERT INTO products VALUES ('electronics', 1, 'Phone')")
+        self.cursor.execute(
+            "INSERT INTO prices VALUES ('electronics', 1, 999.0), ('electronics', 1, 888.0)"
+        )
+        result = execute(self.cursor, self._query(Validate.MANY_TO_ONE))
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+
+    def test_many_to_one_passes_when_single_column_duplicated_but_composite_key_unique(self):
+        """
+        sku=1 appears in two categories; single-column uniqueness on sku would
+        falsely fail, but MANY_TO_ONE on the composite criterion should pass.
+        """
+        # sku=1 shared between electronics and books — column-level check would flag this
+        self.cursor.execute(
+            "INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('books', 1, 'Novel')"
+        )
+        self.cursor.execute(
+            "INSERT INTO prices VALUES ('electronics', 1, 999.0), ('books', 1, 19.99)"
+        )
+        result = execute(self.cursor, self._query(Validate.MANY_TO_ONE))
+        self.assertEqual(result.status, Status.OK)
+
+    def test_one_to_many_passes_with_unique_composite_key_on_product_side(self):
+        """Each (category, sku) product is unique; each price maps to at most one product."""
+        self.cursor.execute(
+            "INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('electronics', 2, 'Tablet')"
+        )
+        self.cursor.execute(
+            "INSERT INTO prices VALUES ('electronics', 1, 999.0), ('electronics', 2, 599.0)"
+        )
+        result = execute(self.cursor, self._query(Validate.ONE_TO_MANY))
+        self.assertEqual(result.status, Status.OK)
+
+    def test_one_to_many_fails_when_product_composite_key_duplicated(self):
+        """Two product rows with the same (category, sku) cause ONE_TO_MANY to fail."""
+        self.cursor.execute(
+            "INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('electronics', 1, 'Phone v2')"
+        )
+        self.cursor.execute("INSERT INTO prices VALUES ('electronics', 1, 999.0)")
+        result = execute(self.cursor, self._query(Validate.ONE_TO_MANY))
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+
+    def test_left_total_passes_when_every_product_has_price(self):
+        self.cursor.execute(
+            "INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('books', 1, 'Novel')"
+        )
+        self.cursor.execute(
+            "INSERT INTO prices VALUES ('electronics', 1, 999.0), ('books', 1, 19.99)"
+        )
+        result = execute(self.cursor, self._query(Validate.LEFT_TOTAL))
+        self.assertEqual(result.status, Status.OK)
+
+    def test_left_total_fails_when_product_has_no_matching_price(self):
+        """A product with no entry in prices under its composite key violates LEFT_TOTAL."""
+        self.cursor.execute(
+            "INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('toys', 5, 'Brick')"
+        )
+        self.cursor.execute("INSERT INTO prices VALUES ('electronics', 1, 999.0)")
+        # toys/5 has no price
+        result = execute(self.cursor, self._query(Validate.LEFT_TOTAL))
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+
+    def test_left_total_failure_reports_correct_count_and_sample(self):
+        self.cursor.execute(
+            "INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('toys', 5, 'Brick'), ('toys', 6, 'Doll')"
+        )
+        self.cursor.execute("INSERT INTO prices VALUES ('electronics', 1, 999.0)")
+        result = execute(self.cursor, self._query(Validate.LEFT_TOTAL))
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+        self.assertEqual(result.error_size, 2)  # toys/5 and toys/6 both missing
+        self.assertEqual(len(result.error_sample), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,7 @@ This directory contains example scripts demonstrating the validation features of
 
 - **combined_flags.py** - Combining validation flags with the `|` operator
 - **multi_table_join.py** - Validation across multiple joined tables (left-to-right evaluation)
+- **composite_key_join.py** - Joins on composite (multi-column) keys; demonstrates that single-column duplicates do not trigger false violations
 
 ### Production Patterns
 

@@ -14,25 +14,43 @@ Query.from_(base_table).join(join_table, JoinType.inner, validate=Validate.ONE_T
 
 This does additional work to check that the tables are 1-1.
 
-```sql
--- Assert empty
-SELECT *
-FROM base_table
-WHERE xkey IN (
-    SELECT ykey
-    FROM join_table
-    GROUP BY ykey
-    HAVING COUNT(*) > 1
-);
+Validation works against the full `ON` criterion, so composite keys and arbitrary expressions are supported.  For a composite key join such as:
 
--- Assert also empty
+```python
+Query.from_(base_table)
+    .join(join_table, validate=Validate.ONE_TO_ONE)
+    .on((base_table.cat == join_table.cat) & (base_table.sku == join_table.sku))
+```
+
+the generated validation queries use correlated subqueries:
+
+```sql
+-- ONE_TO_MANY: each join_table row matches at most 1 base_table row
 SELECT *
 FROM join_table
-WHERE ykey IN (
-    SELECT xkey
-    FROM base_table
-    GROUP BY xkey
-    HAVING COUNT(*) > 1
+WHERE (
+    SELECT COUNT(*) FROM base_table
+    WHERE base_table.cat = join_table.cat AND base_table.sku = join_table.sku
+) > 1;
+
+-- MANY_TO_ONE: each base_table row matches at most 1 join_table row
+SELECT *
+FROM base_table
+WHERE (
+    SELECT COUNT(*) FROM join_table
+    WHERE base_table.cat = join_table.cat AND base_table.sku = join_table.sku
+) > 1;
+```
+
+The same pattern applies for `LEFT_TOTAL` and `RIGHT_TOTAL`, using `NOT EXISTS` instead:
+
+```sql
+-- LEFT_TOTAL: every base_table row has at least one match in join_table
+SELECT *
+FROM base_table
+WHERE NOT EXISTS (
+    SELECT 1 FROM join_table
+    WHERE base_table.cat = join_table.cat AND base_table.sku = join_table.sku
 );
 ```
 
@@ -102,7 +120,7 @@ The validate-then-execute pattern does not provide any atomicity guarantees.  It
 
 ### What the library doesn't do
 
-As a principle, we don't try to optimize; this keeps the implementation simple, and optimizing could be counterproductive given so many SQL implementations. (Some work may be saved by server-side caching.) The validation queries use simple `IN` subqueries which may not be optimal for very large tables; consider the performance implications for your data volumes. This means:
+As a principle, we don't try to optimize; this keeps the implementation simple, and optimizing could be counterproductive given so many SQL implementations. (Some work may be saved by server-side caching.) The validation queries use correlated subqueries which may not be optimal for very large tables; consider the performance implications for your data volumes. This means:
 
 1. The library does not share information between the validations and the execution. For example, it does not use the result of the query to then check for new duplicates on a 1:1. Although this may be faster, it would force that check to happen locally, instead of sending the work to the SQL server.
 2. The library does not share information between validations. For example, when we check every join of ((x JOIN y) JOIN z) JOIN w, we may be able to use results from one check to perform the next check.
