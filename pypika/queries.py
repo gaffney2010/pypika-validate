@@ -1070,19 +1070,25 @@ class QueryBuilder(Selectable, Term):
     def left_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
         return self.join(item, JoinType.left, validate=validate)
 
-    def left_outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
+    def left_outer_join(
+        self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE
+    ) -> Joiner[Self]:
         return self.join(item, JoinType.left_outer, validate=validate)
 
     def right_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
         return self.join(item, JoinType.right, validate=validate)
 
-    def right_outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
+    def right_outer_join(
+        self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE
+    ) -> Joiner[Self]:
         return self.join(item, JoinType.right_outer, validate=validate)
 
     def outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
         return self.join(item, JoinType.outer, validate=validate)
 
-    def full_outer_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
+    def full_outer_join(
+        self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE
+    ) -> Joiner[Self]:
         return self.join(item, JoinType.full_outer, validate=validate)
 
     def cross_join(self, item: Table | QueryBuilder | AliasedQuery, validate: Validate = Validate.NONE) -> Joiner[Self]:
@@ -1718,7 +1724,12 @@ class Join:
 
 class JoinOn(Join):
     def __init__(
-        self, item: Term, how: JoinType, criteria: QueryBuilder, collate: str | None = None, validate: Validate = Validate.NONE
+        self,
+        item: Term,
+        how: JoinType,
+        criteria: QueryBuilder,
+        collate: str | None = None,
+        validate: Validate = Validate.NONE,
     ) -> None:
         super().__init__(item, how)
         self.criterion = criteria

@@ -18,11 +18,11 @@ pValue = Any
 
 
 class Validate(Flag):
-    NONE = 0              # empty flag: no validation
+    NONE = 0  # empty flag: no validation
     ONE_TO_MANY = auto()  # left key unique: each right row maps to at most 1 left row
     MANY_TO_ONE = auto()  # right key unique: each left row maps to at most 1 right row
     ONE_TO_ONE = ONE_TO_MANY | MANY_TO_ONE
-    LEFT_TOTAL = auto()   # every left row has at least 1 match on the right
+    LEFT_TOTAL = auto()  # every left row has at least 1 match on the right
     RIGHT_TOTAL = auto()  # every right row has at least 1 match on the left
     TOTAL = LEFT_TOTAL | RIGHT_TOTAL
     MANDATORY = ONE_TO_ONE | TOTAL
@@ -48,6 +48,7 @@ class Results:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _q(name: str) -> str:
     """Return name wrapped in double-quotes, escaping any internal double-quotes."""
@@ -93,9 +94,11 @@ def _get_left_table(criterion: Any, right_table: Any) -> Any:
 
 def _check_many_to_one(
     cursor: pCursor,
-    left_from: str, right_from: str,
+    left_from: str,
+    right_from: str,
     criterion_sql: str,
-    left_name: str, right_name: str,
+    left_name: str,
+    right_name: str,
     verbose: bool = False,
 ) -> Optional[Results]:
     """
@@ -105,7 +108,9 @@ def _check_many_to_one(
         SELECT * FROM <left> WHERE (SELECT COUNT(*) FROM <right> WHERE <criterion>) > 1
     """
     count_sql = f"SELECT COUNT(*) FROM {left_from} WHERE (SELECT COUNT(*) FROM {right_from} WHERE {criterion_sql}) > 1"
-    sample_sql = f"SELECT * FROM {left_from} WHERE (SELECT COUNT(*) FROM {right_from} WHERE {criterion_sql}) > 1 LIMIT 10"
+    sample_sql = (
+        f"SELECT * FROM {left_from} WHERE (SELECT COUNT(*) FROM {right_from} WHERE {criterion_sql}) > 1 LIMIT 10"
+    )
 
     if verbose:
         log.debug("  MANY_TO_ONE: each %s row matches at most 1 %s row", left_name, right_name)
@@ -133,9 +138,11 @@ def _check_many_to_one(
 
 def _check_one_to_many(
     cursor: pCursor,
-    left_from: str, right_from: str,
+    left_from: str,
+    right_from: str,
     criterion_sql: str,
-    left_name: str, right_name: str,
+    left_name: str,
+    right_name: str,
     verbose: bool = False,
 ) -> Optional[Results]:
     """
@@ -145,7 +152,9 @@ def _check_one_to_many(
         SELECT * FROM <right> WHERE (SELECT COUNT(*) FROM <left> WHERE <criterion>) > 1
     """
     count_sql = f"SELECT COUNT(*) FROM {right_from} WHERE (SELECT COUNT(*) FROM {left_from} WHERE {criterion_sql}) > 1"
-    sample_sql = f"SELECT * FROM {right_from} WHERE (SELECT COUNT(*) FROM {left_from} WHERE {criterion_sql}) > 1 LIMIT 10"
+    sample_sql = (
+        f"SELECT * FROM {right_from} WHERE (SELECT COUNT(*) FROM {left_from} WHERE {criterion_sql}) > 1 LIMIT 10"
+    )
 
     if verbose:
         log.debug("  ONE_TO_MANY: each %s row matches at most 1 %s row", right_name, left_name)
@@ -173,9 +182,11 @@ def _check_one_to_many(
 
 def _check_left_total(
     cursor: pCursor,
-    left_from: str, right_from: str,
+    left_from: str,
+    right_from: str,
     criterion_sql: str,
-    left_name: str, right_name: str,
+    left_name: str,
+    right_name: str,
     verbose: bool = False,
 ) -> Optional[Results]:
     """
@@ -185,7 +196,9 @@ def _check_left_total(
         SELECT * FROM <left> WHERE NOT EXISTS (SELECT 1 FROM <right> WHERE <criterion>)
     """
     count_sql = f"SELECT COUNT(*) FROM {left_from} WHERE NOT EXISTS (SELECT 1 FROM {right_from} WHERE {criterion_sql})"
-    sample_sql = f"SELECT * FROM {left_from} WHERE NOT EXISTS (SELECT 1 FROM {right_from} WHERE {criterion_sql}) LIMIT 10"
+    sample_sql = (
+        f"SELECT * FROM {left_from} WHERE NOT EXISTS (SELECT 1 FROM {right_from} WHERE {criterion_sql}) LIMIT 10"
+    )
 
     if verbose:
         log.debug("  LEFT_TOTAL: every %s row has a match in %s", left_name, right_name)
@@ -213,9 +226,11 @@ def _check_left_total(
 
 def _check_right_total(
     cursor: pCursor,
-    left_from: str, right_from: str,
+    left_from: str,
+    right_from: str,
     criterion_sql: str,
-    left_name: str, right_name: str,
+    left_name: str,
+    right_name: str,
     verbose: bool = False,
 ) -> Optional[Results]:
     """
@@ -225,7 +240,9 @@ def _check_right_total(
         SELECT * FROM <right> WHERE NOT EXISTS (SELECT 1 FROM <left> WHERE <criterion>)
     """
     count_sql = f"SELECT COUNT(*) FROM {right_from} WHERE NOT EXISTS (SELECT 1 FROM {left_from} WHERE {criterion_sql})"
-    sample_sql = f"SELECT * FROM {right_from} WHERE NOT EXISTS (SELECT 1 FROM {left_from} WHERE {criterion_sql}) LIMIT 10"
+    sample_sql = (
+        f"SELECT * FROM {right_from} WHERE NOT EXISTS (SELECT 1 FROM {left_from} WHERE {criterion_sql}) LIMIT 10"
+    )
 
     if verbose:
         log.debug("  RIGHT_TOTAL: every %s row has a match in %s", right_name, left_name)
@@ -276,12 +293,16 @@ def _validate_join(cursor: pCursor, join: JoinOn, verbose: bool = False) -> Opti
         log.debug("  ON: %s", criterion_sql)
 
     if validate & Validate.ONE_TO_MANY:
-        result = _check_one_to_many(cursor, left_from, right_from, criterion_sql, left_name, right_name, verbose=verbose)
+        result = _check_one_to_many(
+            cursor, left_from, right_from, criterion_sql, left_name, right_name, verbose=verbose
+        )
         if result is not None:
             return result
 
     if validate & Validate.MANY_TO_ONE:
-        result = _check_many_to_one(cursor, left_from, right_from, criterion_sql, left_name, right_name, verbose=verbose)
+        result = _check_many_to_one(
+            cursor, left_from, right_from, criterion_sql, left_name, right_name, verbose=verbose
+        )
         if result is not None:
             return result
 
@@ -291,7 +312,9 @@ def _validate_join(cursor: pCursor, join: JoinOn, verbose: bool = False) -> Opti
             return result
 
     if validate & Validate.RIGHT_TOTAL:
-        result = _check_right_total(cursor, left_from, right_from, criterion_sql, left_name, right_name, verbose=verbose)
+        result = _check_right_total(
+            cursor, left_from, right_from, criterion_sql, left_name, right_name, verbose=verbose
+        )
         if result is not None:
             return result
 
@@ -301,6 +324,7 @@ def _validate_join(cursor: pCursor, join: JoinOn, verbose: bool = False) -> Opti
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def execute(
     cursor: pCursor,

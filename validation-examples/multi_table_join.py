@@ -44,7 +44,9 @@ cursor = conn.cursor()
 
 # Set up test data
 cursor.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_name TEXT)")
-cursor.execute("CREATE TABLE order_items (id INTEGER PRIMARY KEY, order_id INTEGER, product_id INTEGER, quantity INTEGER)")
+cursor.execute(
+    "CREATE TABLE order_items (id INTEGER PRIMARY KEY, order_id INTEGER, product_id INTEGER, quantity INTEGER)"
+)
 cursor.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL)")
 
 cursor.execute("INSERT INTO orders VALUES (1, 'Alice'), (2, 'Bob')")

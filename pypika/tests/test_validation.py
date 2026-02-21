@@ -158,13 +158,9 @@ class OneToOneTests(unittest.TestCase):
 
     def test_error_sample_capped_at_ten_rows(self):
         """error_sample should contain at most 10 rows regardless of violation count."""
-        self.cursor.execute(
-            "INSERT INTO users VALUES " + ", ".join(f"({i}, 'User{i}')" for i in range(1, 22))
-        )
+        self.cursor.execute("INSERT INTO users VALUES " + ", ".join(f"({i}, 'User{i}')" for i in range(1, 22)))
         # All 21 profiles share user_id=1, generating many violations
-        self.cursor.execute(
-            "INSERT INTO profiles VALUES " + ", ".join(f"({i}, 1, 'bio{i}')" for i in range(1, 22))
-        )
+        self.cursor.execute("INSERT INTO profiles VALUES " + ", ".join(f"({i}, 1, 'bio{i}')" for i in range(1, 22)))
         result = execute(self.cursor, self._query())
         self.assertEqual(result.status, Status.VALIDATION_ERROR)
         self.assertLessEqual(len(result.error_sample), 10)
@@ -527,7 +523,9 @@ class MultiTableJoinTests(unittest.TestCase):
 
     def test_passes_when_all_joins_are_valid(self):
         self.cursor.execute("INSERT INTO orders VALUES (1, 'Alice'), (2, 'Bob')")
-        self.cursor.execute("INSERT INTO products VALUES (1, 'Widget', 9.99), (2, 'Gadget', 19.99), (3, 'Gizmo', 29.99)")
+        self.cursor.execute(
+            "INSERT INTO products VALUES (1, 'Widget', 9.99), (2, 'Gadget', 19.99), (3, 'Gizmo', 29.99)"
+        )
         self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 1, 2), (2, 1, 2, 1), (3, 2, 1, 5), (4, 2, 3, 1)")
         result = execute(self.cursor, self._query())
         self.assertEqual(result.status, Status.OK)
@@ -563,9 +561,7 @@ class SubqueryJoinTests(unittest.TestCase):
         self.conn = sqlite3.connect(":memory:")
         self.cursor = self.conn.cursor()
         self.cursor.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT)")
-        self.cursor.execute(
-            "CREATE TABLE order_items (id INTEGER, product_id INTEGER, qty INTEGER, fulfilled INTEGER)"
-        )
+        self.cursor.execute("CREATE TABLE order_items (id INTEGER, product_id INTEGER, qty INTEGER, fulfilled INTEGER)")
         self.products = Table("products")
         self.order_items = Table("order_items")
 
@@ -575,12 +571,7 @@ class SubqueryJoinTests(unittest.TestCase):
     def _fulfilled_sub(self):
         """Subquery: fulfilled order rows."""
         oi = self.order_items
-        return (
-            Query.from_(oi)
-            .where(oi.fulfilled == 1)
-            .select(oi.product_id, oi.qty)
-            .as_("fulfilled")
-        )
+        return Query.from_(oi).where(oi.fulfilled == 1).select(oi.product_id, oi.qty).as_("fulfilled")
 
     def test_many_to_one_passes_when_subquery_rows_are_unique(self):
         """Each product has exactly one fulfilled row in the subquery."""
@@ -767,9 +758,7 @@ class CompositeKeyJoinTests(unittest.TestCase):
     def test_many_to_one_fails_when_composite_key_has_duplicates(self):
         """Two price rows with the same (category, sku) cause MANY_TO_ONE to fail."""
         self.cursor.execute("INSERT INTO products VALUES ('electronics', 1, 'Phone')")
-        self.cursor.execute(
-            "INSERT INTO prices VALUES ('electronics', 1, 999.0), ('electronics', 1, 888.0)"
-        )
+        self.cursor.execute("INSERT INTO prices VALUES ('electronics', 1, 999.0), ('electronics', 1, 888.0)")
         result = execute(self.cursor, self._query(Validate.MANY_TO_ONE))
         self.assertEqual(result.status, Status.VALIDATION_ERROR)
 
@@ -779,50 +768,34 @@ class CompositeKeyJoinTests(unittest.TestCase):
         falsely fail, but MANY_TO_ONE on the composite criterion should pass.
         """
         # sku=1 shared between electronics and books — column-level check would flag this
-        self.cursor.execute(
-            "INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('books', 1, 'Novel')"
-        )
-        self.cursor.execute(
-            "INSERT INTO prices VALUES ('electronics', 1, 999.0), ('books', 1, 19.99)"
-        )
+        self.cursor.execute("INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('books', 1, 'Novel')")
+        self.cursor.execute("INSERT INTO prices VALUES ('electronics', 1, 999.0), ('books', 1, 19.99)")
         result = execute(self.cursor, self._query(Validate.MANY_TO_ONE))
         self.assertEqual(result.status, Status.OK)
 
     def test_one_to_many_passes_with_unique_composite_key_on_product_side(self):
         """Each (category, sku) product is unique; each price maps to at most one product."""
-        self.cursor.execute(
-            "INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('electronics', 2, 'Tablet')"
-        )
-        self.cursor.execute(
-            "INSERT INTO prices VALUES ('electronics', 1, 999.0), ('electronics', 2, 599.0)"
-        )
+        self.cursor.execute("INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('electronics', 2, 'Tablet')")
+        self.cursor.execute("INSERT INTO prices VALUES ('electronics', 1, 999.0), ('electronics', 2, 599.0)")
         result = execute(self.cursor, self._query(Validate.ONE_TO_MANY))
         self.assertEqual(result.status, Status.OK)
 
     def test_one_to_many_fails_when_product_composite_key_duplicated(self):
         """Two product rows with the same (category, sku) cause ONE_TO_MANY to fail."""
-        self.cursor.execute(
-            "INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('electronics', 1, 'Phone v2')"
-        )
+        self.cursor.execute("INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('electronics', 1, 'Phone v2')")
         self.cursor.execute("INSERT INTO prices VALUES ('electronics', 1, 999.0)")
         result = execute(self.cursor, self._query(Validate.ONE_TO_MANY))
         self.assertEqual(result.status, Status.VALIDATION_ERROR)
 
     def test_left_total_passes_when_every_product_has_price(self):
-        self.cursor.execute(
-            "INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('books', 1, 'Novel')"
-        )
-        self.cursor.execute(
-            "INSERT INTO prices VALUES ('electronics', 1, 999.0), ('books', 1, 19.99)"
-        )
+        self.cursor.execute("INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('books', 1, 'Novel')")
+        self.cursor.execute("INSERT INTO prices VALUES ('electronics', 1, 999.0), ('books', 1, 19.99)")
         result = execute(self.cursor, self._query(Validate.LEFT_TOTAL))
         self.assertEqual(result.status, Status.OK)
 
     def test_left_total_fails_when_product_has_no_matching_price(self):
         """A product with no entry in prices under its composite key violates LEFT_TOTAL."""
-        self.cursor.execute(
-            "INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('toys', 5, 'Brick')"
-        )
+        self.cursor.execute("INSERT INTO products VALUES ('electronics', 1, 'Phone'), ('toys', 5, 'Brick')")
         self.cursor.execute("INSERT INTO prices VALUES ('electronics', 1, 999.0)")
         # toys/5 has no price
         result = execute(self.cursor, self._query(Validate.LEFT_TOTAL))

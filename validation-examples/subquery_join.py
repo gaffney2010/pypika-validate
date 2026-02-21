@@ -29,13 +29,8 @@ cursor = conn.cursor()
 cursor.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT)")
 cursor.execute("CREATE TABLE order_items (id INTEGER, product_id INTEGER, qty INTEGER, fulfilled INTEGER)")
 
-cursor.execute(
-    "INSERT INTO products VALUES (1, 'Widget'), (2, 'Gadget'), (3, 'Doohickey')"
-)
-cursor.execute(
-    "INSERT INTO order_items VALUES "
-    "(1, 1, 5, 1), (2, 2, 3, 1), (3, 3, 2, 1)"
-)
+cursor.execute("INSERT INTO products VALUES (1, 'Widget'), (2, 'Gadget'), (3, 'Doohickey')")
+cursor.execute("INSERT INTO order_items VALUES " "(1, 1, 5, 1), (2, 2, 3, 1), (3, 3, 2, 1)")
 
 products = Table("products")
 order_items = Table("order_items")

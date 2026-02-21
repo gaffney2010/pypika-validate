@@ -27,13 +27,9 @@ cursor.execute("CREATE TABLE prices (category TEXT, sku INTEGER, price REAL)")
 
 # sku=1 appears in two categories — single-column check would be wrong here
 cursor.execute(
-    "INSERT INTO products VALUES "
-    "('electronics', 1, 'Phone'), ('electronics', 2, 'Tablet'), ('books', 1, 'Novel')"
+    "INSERT INTO products VALUES " "('electronics', 1, 'Phone'), ('electronics', 2, 'Tablet'), ('books', 1, 'Novel')"
 )
-cursor.execute(
-    "INSERT INTO prices VALUES "
-    "('electronics', 1, 999.0), ('electronics', 2, 599.0), ('books', 1, 19.99)"
-)
+cursor.execute("INSERT INTO prices VALUES " "('electronics', 1, 999.0), ('electronics', 2, 599.0), ('books', 1, 19.99)")
 
 products = Table("products")
 prices = Table("prices")

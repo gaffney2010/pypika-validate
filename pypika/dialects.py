@@ -887,7 +887,7 @@ class ClickHouseQueryBuilder(QueryBuilder):
         return super()._apply_pagination(querystring, **kwargs)
 
     def _limit_by_sql(self, **kwargs: Any) -> str:
-        (n, offset, by) = self._limit_by
+        n, offset, by = self._limit_by
         by = ",".join(term.get_sql(with_alias=True, **kwargs) for term in by)
         if offset != 0:
             return f" LIMIT {n} OFFSET {offset} BY ({by})"
