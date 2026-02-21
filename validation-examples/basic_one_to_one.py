@@ -6,10 +6,14 @@ is truly one-to-one (each user has exactly one profile, each profile belongs to
 exactly one user).
 """
 
+import logging
 import sqlite3
 
 from pypika import Query, Table
 from pypika.validation import Validate, Status, execute
+
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)-8s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
 
 # Create tables
 users = Table("users")
@@ -34,18 +38,18 @@ cursor.execute("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
 cursor.execute("INSERT INTO user_profiles VALUES (1, 1, 'Alice bio'), (2, 2, 'Bob bio')")
 
 # Execute the query with validation
-result = execute(cursor, query)
+result = execute(cursor, query, verbose=True)
 
 if result.status == Status.OK:
-    print("Validation passed! Query results:")
+    log.info("Validation passed! Query results:")
     for row in result.value:
-        print(f"  {row}")
+        log.info("  %s", row)
 elif result.status == Status.VALIDATION_ERROR:
-    print(f"Validation failed at {result.error_loc}")
-    print(f"Error: {result.error_msg}")
-    print(f"Number of violations: {result.error_size}")
-    print("Sample of failing rows:")
+    log.info("Validation failed at %s", result.error_loc)
+    log.info("Error: %s", result.error_msg)
+    log.info("Number of violations: %s", result.error_size)
+    log.info("Sample of failing rows:")
     for row in result.error_sample:
-        print(f"  {row}")
+        log.info("  %s", row)
 
 conn.close()

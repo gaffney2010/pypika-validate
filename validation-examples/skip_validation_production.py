@@ -6,11 +6,21 @@ Use skip_validation=True to bypass all validation checks while keeping
 the validation declarations in your code for documentation.
 """
 
-import sqlite3
+import logging
 import os
+import sqlite3
 
 from pypika import Query, Table
 from pypika.validation import Validate, Status, execute
+
+# Check environment to decide whether to validate
+# In production, set PYPIKA_SKIP_VALIDATION=1
+is_production = os.environ.get("PYPIKA_SKIP_VALIDATION", "0") == "1"
+
+# Enable debug logging only in development (verbose=True below)
+log_level = logging.INFO if is_production else logging.DEBUG
+logging.basicConfig(level=log_level, format="%(levelname)-8s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
 
 # Create tables
 users = Table("users")
@@ -34,33 +44,28 @@ cursor.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, to
 cursor.execute("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
 cursor.execute("INSERT INTO orders VALUES (1, 1, 100.00), (2, 1, 200.00), (3, 2, 150.00)")
 
-# Check environment to decide whether to validate
-# In production, set PYPIKA_SKIP_VALIDATION=1
-is_production = os.environ.get("PYPIKA_SKIP_VALIDATION", "0") == "1"
+log.info("Environment: %s", "PRODUCTION" if is_production else "DEVELOPMENT")
+log.info("Validation: %s", "SKIPPED" if is_production else "ENABLED")
 
-print(f"Environment: {'PRODUCTION' if is_production else 'DEVELOPMENT'}")
-print(f"Validation: {'SKIPPED' if is_production else 'ENABLED'}")
-print()
-
-result = execute(cursor, query, skip_validation=is_production)
+# verbose only in development; skip_validation only in production
+result = execute(cursor, query, skip_validation=is_production, verbose=not is_production)
 
 if result.status == Status.NOT_VALIDATED:
-    print("Query executed without validation (production mode)")
-    print("Results:")
+    log.info("Query executed without validation (production mode)")
+    log.info("Results:")
     for row in result.value:
-        print(f"  {row}")
+        log.info("  %s", row)
 elif result.status == Status.OK:
-    print("Validation passed (development mode)")
-    print("Results:")
+    log.info("Validation passed (development mode)")
+    log.info("Results:")
     for row in result.value:
-        print(f"  {row}")
+        log.info("  %s", row)
 elif result.status == Status.VALIDATION_ERROR:
-    print("Validation failed (development mode)")
-    print(f"Error: {result.error_msg}")
+    log.info("Validation failed (development mode)")
+    log.info("Error: %s", result.error_msg)
     # In development, this would alert you to data issues
     # before they cause subtle bugs in production
 
 conn.close()
 
-print()
-print("Tip: Run with PYPIKA_SKIP_VALIDATION=1 to simulate production mode")
+log.info("Tip: Run with PYPIKA_SKIP_VALIDATION=1 to simulate production mode")

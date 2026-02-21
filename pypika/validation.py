@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Flag, auto, Enum
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from pypika.queries import JoinOn, QueryBuilder
+
+log = logging.getLogger(__name__)
 
 # Pseudotypes: the exact cursor and row-value types depend on the SQL engine.
 pCursor = Any
@@ -93,6 +96,7 @@ def _check_many_to_one(
     left_from: str, right_from: str,
     criterion_sql: str,
     left_name: str, right_name: str,
+    verbose: bool = False,
 ) -> Optional[Results]:
     """
     Verify every row in *left* matches at most one row in *right*.
@@ -103,8 +107,16 @@ def _check_many_to_one(
     count_sql = f"SELECT COUNT(*) FROM {left_from} WHERE (SELECT COUNT(*) FROM {right_from} WHERE {criterion_sql}) > 1"
     sample_sql = f"SELECT * FROM {left_from} WHERE (SELECT COUNT(*) FROM {right_from} WHERE {criterion_sql}) > 1 LIMIT 10"
 
+    if verbose:
+        log.debug("  MANY_TO_ONE: each %s row matches at most 1 %s row", left_name, right_name)
+        log.debug("    SQL: %s", count_sql)
+
     cursor.execute(count_sql)
     count = cursor.fetchone()[0]
+
+    if verbose:
+        log.debug("    → %d violation(s)", count)
+
     if count == 0:
         return None
 
@@ -124,6 +136,7 @@ def _check_one_to_many(
     left_from: str, right_from: str,
     criterion_sql: str,
     left_name: str, right_name: str,
+    verbose: bool = False,
 ) -> Optional[Results]:
     """
     Verify every row in *right* matches at most one row in *left*.
@@ -134,8 +147,16 @@ def _check_one_to_many(
     count_sql = f"SELECT COUNT(*) FROM {right_from} WHERE (SELECT COUNT(*) FROM {left_from} WHERE {criterion_sql}) > 1"
     sample_sql = f"SELECT * FROM {right_from} WHERE (SELECT COUNT(*) FROM {left_from} WHERE {criterion_sql}) > 1 LIMIT 10"
 
+    if verbose:
+        log.debug("  ONE_TO_MANY: each %s row matches at most 1 %s row", right_name, left_name)
+        log.debug("    SQL: %s", count_sql)
+
     cursor.execute(count_sql)
     count = cursor.fetchone()[0]
+
+    if verbose:
+        log.debug("    → %d violation(s)", count)
+
     if count == 0:
         return None
 
@@ -155,6 +176,7 @@ def _check_left_total(
     left_from: str, right_from: str,
     criterion_sql: str,
     left_name: str, right_name: str,
+    verbose: bool = False,
 ) -> Optional[Results]:
     """
     Verify every row in *left* has at least one match in *right*.
@@ -165,8 +187,16 @@ def _check_left_total(
     count_sql = f"SELECT COUNT(*) FROM {left_from} WHERE NOT EXISTS (SELECT 1 FROM {right_from} WHERE {criterion_sql})"
     sample_sql = f"SELECT * FROM {left_from} WHERE NOT EXISTS (SELECT 1 FROM {right_from} WHERE {criterion_sql}) LIMIT 10"
 
+    if verbose:
+        log.debug("  LEFT_TOTAL: every %s row has a match in %s", left_name, right_name)
+        log.debug("    SQL: %s", count_sql)
+
     cursor.execute(count_sql)
     count = cursor.fetchone()[0]
+
+    if verbose:
+        log.debug("    → %d unmatched row(s)", count)
+
     if count == 0:
         return None
 
@@ -186,6 +216,7 @@ def _check_right_total(
     left_from: str, right_from: str,
     criterion_sql: str,
     left_name: str, right_name: str,
+    verbose: bool = False,
 ) -> Optional[Results]:
     """
     Verify every row in *right* has at least one match in *left*.
@@ -196,8 +227,16 @@ def _check_right_total(
     count_sql = f"SELECT COUNT(*) FROM {right_from} WHERE NOT EXISTS (SELECT 1 FROM {left_from} WHERE {criterion_sql})"
     sample_sql = f"SELECT * FROM {right_from} WHERE NOT EXISTS (SELECT 1 FROM {left_from} WHERE {criterion_sql}) LIMIT 10"
 
+    if verbose:
+        log.debug("  RIGHT_TOTAL: every %s row has a match in %s", right_name, left_name)
+        log.debug("    SQL: %s", count_sql)
+
     cursor.execute(count_sql)
     count = cursor.fetchone()[0]
+
+    if verbose:
+        log.debug("    → %d unmatched row(s)", count)
+
     if count == 0:
         return None
 
@@ -212,7 +251,7 @@ def _check_right_total(
     )
 
 
-def _validate_join(cursor: pCursor, join: JoinOn) -> Optional[Results]:
+def _validate_join(cursor: pCursor, join: JoinOn, verbose: bool = False) -> Optional[Results]:
     """
     Run all validation checks for a single join.  Returns the first
     Results(VALIDATION_ERROR) encountered, or None if all checks pass.
@@ -232,23 +271,27 @@ def _validate_join(cursor: pCursor, join: JoinOn) -> Optional[Results]:
     right_from, right_name = _item_from_and_name(right_table)
     criterion_sql = join.criterion.get_sql(quote_char='"', subquery=True, with_namespace=True)
 
+    if verbose:
+        log.debug("Validating join: %s → %s [%s]", left_name, right_name, join.validation)
+        log.debug("  ON: %s", criterion_sql)
+
     if validate & Validate.ONE_TO_MANY:
-        result = _check_one_to_many(cursor, left_from, right_from, criterion_sql, left_name, right_name)
+        result = _check_one_to_many(cursor, left_from, right_from, criterion_sql, left_name, right_name, verbose=verbose)
         if result is not None:
             return result
 
     if validate & Validate.MANY_TO_ONE:
-        result = _check_many_to_one(cursor, left_from, right_from, criterion_sql, left_name, right_name)
+        result = _check_many_to_one(cursor, left_from, right_from, criterion_sql, left_name, right_name, verbose=verbose)
         if result is not None:
             return result
 
     if validate & Validate.LEFT_TOTAL:
-        result = _check_left_total(cursor, left_from, right_from, criterion_sql, left_name, right_name)
+        result = _check_left_total(cursor, left_from, right_from, criterion_sql, left_name, right_name, verbose=verbose)
         if result is not None:
             return result
 
     if validate & Validate.RIGHT_TOTAL:
-        result = _check_right_total(cursor, left_from, right_from, criterion_sql, left_name, right_name)
+        result = _check_right_total(cursor, left_from, right_from, criterion_sql, left_name, right_name, verbose=verbose)
         if result is not None:
             return result
 
@@ -259,7 +302,12 @@ def _validate_join(cursor: pCursor, join: JoinOn) -> Optional[Results]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def execute(cursor: pCursor, query: QueryBuilder, skip_validation: bool = False) -> Results:
+def execute(
+    cursor: pCursor,
+    query: QueryBuilder,
+    skip_validation: bool = False,
+    verbose: bool = False,
+) -> Results:
     """
     Execute a pypika query, optionally validating join cardinality first.
 
@@ -267,6 +315,8 @@ def execute(cursor: pCursor, query: QueryBuilder, skip_validation: bool = False)
         cursor:           A DB-API 2.0 compliant database cursor.
         query:            A pypika QueryBuilder instance.
         skip_validation:  When True, skip all validation and return NOT_VALIDATED.
+        verbose:          When True, emit DEBUG-level log messages describing each
+                          validation check and the SQL it runs.
 
     Returns:
         A Results object whose ``status`` is one of:
@@ -278,12 +328,15 @@ def execute(cursor: pCursor, query: QueryBuilder, skip_validation: bool = False)
     """
     sql = query.get_sql()
 
+    if verbose:
+        log.debug("Query SQL: %s", sql)
+
     if not skip_validation:
         for join in query._joins:
             if not (hasattr(join, "validation") and join.validation):
                 continue
             try:
-                result = _validate_join(cursor, join)
+                result = _validate_join(cursor, join, verbose=verbose)
             except Exception as exc:
                 return Results(status=Status.SQL_ERROR, error_msg=str(exc))
             if result is not None:
@@ -293,6 +346,8 @@ def execute(cursor: pCursor, query: QueryBuilder, skip_validation: bool = False)
         cursor.execute(sql)
         value: List[pValue] = cursor.fetchall()
         status = Status.NOT_VALIDATED if skip_validation else Status.OK
+        if verbose:
+            log.debug("Execution: %d row(s) returned, status=%s", len(value), status.value)
         return Results(status=status, value=value)
     except Exception as exc:
         return Results(status=Status.SQL_ERROR, error_msg=str(exc))

@@ -8,10 +8,14 @@ Common combinations:
 - ONE_TO_ONE | TOTAL (= MANDATORY): Bijective relationship, all rows must match
 """
 
+import logging
 import sqlite3
 
 from pypika import Query, Table
 from pypika.validation import Validate, Status, execute
+
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)-8s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
 
 # Create tables
 products = Table("products")
@@ -52,23 +56,23 @@ cursor.execute("INSERT INTO categories VALUES (1, 'Electronics'), (2, 'Clothing'
 cursor.execute("INSERT INTO products VALUES (1, 'Laptop', 1), (2, 'Phone', 1), (3, 'Shirt', 2)")
 cursor.execute("INSERT INTO prices VALUES (1, 1, 999.99), (2, 2, 599.99), (3, 3, 29.99)")
 
-print("Testing MANY_TO_ONE | RIGHT_TOTAL on products-categories:")
-result = execute(cursor, query_category_check)
+log.info("Testing MANY_TO_ONE | RIGHT_TOTAL on products-categories:")
+result = execute(cursor, query_category_check, verbose=True)
 if result.status == Status.OK:
-    print("  PASSED")
-    print("  - Each product has exactly one category")
-    print("  - Every category has at least one product")
+    log.info("  PASSED")
+    log.info("  - Each product has exactly one category")
+    log.info("  - Every category has at least one product")
 elif result.status == Status.VALIDATION_ERROR:
-    print(f"  FAILED: {result.error_msg}")
+    log.info("  FAILED: %s", result.error_msg)
 
-print("\nTesting MANDATORY on products-prices:")
-result = execute(cursor, query_price_check)
+log.info("Testing MANDATORY on products-prices:")
+result = execute(cursor, query_price_check, verbose=True)
 if result.status == Status.OK:
-    print("  PASSED")
-    print("  - Each product has exactly one price")
-    print("  - Each price belongs to exactly one product")
-    print("  - No products without prices, no orphan prices")
+    log.info("  PASSED")
+    log.info("  - Each product has exactly one price")
+    log.info("  - Each price belongs to exactly one product")
+    log.info("  - No products without prices, no orphan prices")
 elif result.status == Status.VALIDATION_ERROR:
-    print(f"  FAILED: {result.error_msg}")
+    log.info("  FAILED: %s", result.error_msg)
 
 conn.close()

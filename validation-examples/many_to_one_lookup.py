@@ -9,10 +9,14 @@ This is useful when joining to lookup/dimension tables where you expect
 the lookup key to be unique.
 """
 
+import logging
 import sqlite3
 
 from pypika import Query, Table
 from pypika.validation import Validate, Status, execute
+
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)-8s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
 
 # Create tables
 orders = Table("orders")
@@ -42,16 +46,16 @@ cursor.execute("""
     (103, 2, 1200.00)
 """)
 
-result = execute(cursor, query)
+result = execute(cursor, query, verbose=True)
 
 if result.status == Status.OK:
-    print("MANY_TO_ONE validation passed!")
-    print("Each order correctly maps to exactly one customer.")
+    log.info("MANY_TO_ONE validation passed!")
+    log.info("Each order correctly maps to exactly one customer.")
     for row in result.value:
-        print(f"  Order {row[0]}: ${row[1]} from {row[2]}")
+        log.info("  Order %s: $%s from %s", row[0], row[1], row[2])
 elif result.status == Status.VALIDATION_ERROR:
-    print("MANY_TO_ONE validation FAILED!")
-    print(f"Found duplicate customer IDs: {result.error_msg}")
-    print("This means some orders would match multiple customers.")
+    log.info("MANY_TO_ONE validation FAILED!")
+    log.info("Found duplicate customer IDs: %s", result.error_msg)
+    log.info("This means some orders would match multiple customers.")
 
 conn.close()

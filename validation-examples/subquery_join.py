@@ -14,10 +14,14 @@ aggregated row (MANY_TO_ONE) and that every product appears in the fulfillment
 data (LEFT_TOTAL).
 """
 
+import logging
 import sqlite3
 
 from pypika import Query, Table
 from pypika.validation import Validate, Status, execute
+
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)-8s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
 
 conn = sqlite3.connect(":memory:")
 cursor = conn.cursor()
@@ -54,22 +58,24 @@ query_m2o = (
     .select(products.name, fulfilled.qty)
 )
 
-result = execute(cursor, query_m2o)
-print(f"MANY_TO_ONE (expect OK): {result.status.name}")
+log.info("MANY_TO_ONE against subquery (expect OK):")
+result = execute(cursor, query_m2o, verbose=True)
+log.info("Status: %s", result.status.name)
 assert result.status == Status.OK
 for row in result.value:
-    print(f"  {row}")
+    log.info("  %s", row)
 
 # ----------------------------------------------------------------
 # Add a duplicate fulfilled row for product 1 — now MANY_TO_ONE fails
 # ----------------------------------------------------------------
 cursor.execute("INSERT INTO order_items VALUES (4, 1, 8, 1)")
 
-result_bad = execute(cursor, query_m2o)
-print(f"\nMANY_TO_ONE after duplicate (expect VALIDATION_ERROR): {result_bad.status.name}")
+log.info("After duplicate fulfilled row (expect VALIDATION_ERROR):")
+result_bad = execute(cursor, query_m2o, verbose=True)
+log.info("Status: %s", result_bad.status.name)
 assert result_bad.status == Status.VALIDATION_ERROR
-print(f"  Error: {result_bad.error_msg}")
-print(f"  Failing rows (products with multiple fulfilled entries): {result_bad.error_sample}")
+log.info("  Error: %s", result_bad.error_msg)
+log.info("  Failing rows (products with multiple fulfilled entries): %s", result_bad.error_sample)
 
 # ----------------------------------------------------------------
 # LEFT_TOTAL: every product must appear in fulfilled orders
@@ -84,11 +90,12 @@ query_lt = (
     .select(products.name, fulfilled.qty)
 )
 
-result_lt = execute(cursor, query_lt)
-print(f"\nLEFT_TOTAL with missing product (expect VALIDATION_ERROR): {result_lt.status.name}")
+log.info("LEFT_TOTAL with missing product in subquery (expect VALIDATION_ERROR):")
+result_lt = execute(cursor, query_lt, verbose=True)
+log.info("Status: %s", result_lt.status.name)
 assert result_lt.status == Status.VALIDATION_ERROR
-print(f"  Error: {result_lt.error_msg}")
-print(f"  Products with no fulfilled orders: {result_lt.error_sample}")
+log.info("  Error: %s", result_lt.error_msg)
+log.info("  Products with no fulfilled orders: %s", result_lt.error_sample)
 
 conn.close()
-print("\nAll assertions passed.")
+log.info("All assertions passed.")

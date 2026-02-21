@@ -9,44 +9,48 @@ returned by the execute function:
 - NOT_VALIDATED: Validation was skipped
 """
 
+import logging
 import sqlite3
 
 from pypika import Query, Table
 from pypika.validation import Validate, Status, Results, execute
 
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)-8s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
+
 
 def handle_result(result: Results, query_name: str) -> None:
     """Handle the result of a validated query execution."""
-    print(f"\n{'=' * 50}")
-    print(f"Query: {query_name}")
-    print(f"Status: {result.status.name}")
-    print("=" * 50)
+    log.info("=" * 50)
+    log.info("Query: %s", query_name)
+    log.info("Status: %s", result.status.name)
+    log.info("=" * 50)
 
     if result.status == Status.OK:
-        print("SUCCESS: Query executed and all validations passed")
-        print(f"Rows returned: {len(result.value)}")
+        log.info("SUCCESS: Query executed and all validations passed")
+        log.info("Rows returned: %d", len(result.value))
         for row in result.value[:5]:  # Show first 5 rows
-            print(f"  {row}")
+            log.info("  %s", row)
         if len(result.value) > 5:
-            print(f"  ... and {len(result.value) - 5} more rows")
+            log.info("  ... and %d more rows", len(result.value) - 5)
 
     elif result.status == Status.VALIDATION_ERROR:
-        print("VALIDATION FAILED:")
-        print(f"  Location: {result.error_loc}")
-        print(f"  Message: {result.error_msg}")
-        print(f"  Violation count: {result.error_size}")
-        print("  Sample of violations:")
+        log.info("VALIDATION FAILED:")
+        log.info("  Location: %s", result.error_loc)
+        log.info("  Message: %s", result.error_msg)
+        log.info("  Violation count: %s", result.error_size)
+        log.info("  Sample of violations:")
         for row in result.error_sample:
-            print(f"    {row}")
+            log.info("    %s", row)
 
     elif result.status == Status.SQL_ERROR:
-        print("SQL ERROR:")
-        print(f"  Message: {result.error_msg}")
+        log.info("SQL ERROR:")
+        log.info("  Message: %s", result.error_msg)
         # In production, you might want to log this and alert
 
     elif result.status == Status.NOT_VALIDATED:
-        print("SKIPPED: Validation was not performed")
-        print(f"Rows returned: {len(result.value)}")
+        log.info("SKIPPED: Validation was not performed")
+        log.info("Rows returned: %d", len(result.value))
 
 
 # Set up test database with intentional issues
@@ -61,7 +65,7 @@ cursor.execute("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
 cursor.execute("""
     INSERT INTO profiles VALUES
     (1, 1, 'Alice profile 1'),
-    (2, 1, 'Alice profile 2'),  -- Duplicate! Alice has 2 profiles
+    (2, 1, 'Alice profile 2'),
     (3, 2, 'Bob profile')
 """)
 
@@ -93,8 +97,8 @@ query_skip = (
 )
 
 # Execute all queries
-handle_result(execute(cursor, query_one_to_one), "ONE_TO_ONE (expected to fail)")
-handle_result(execute(cursor, query_many_to_one), "MANY_TO_ONE (expected to pass)")
+handle_result(execute(cursor, query_one_to_one, verbose=True), "ONE_TO_ONE (expected to fail)")
+handle_result(execute(cursor, query_many_to_one, verbose=True), "MANY_TO_ONE (expected to pass)")
 handle_result(execute(cursor, query_skip, skip_validation=True), "Skipped validation")
 
 conn.close()

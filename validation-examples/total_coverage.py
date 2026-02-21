@@ -9,10 +9,14 @@ This is useful for ensuring referential integrity without foreign keys,
 or validating that all expected data is present.
 """
 
+import logging
 import sqlite3
 
 from pypika import Query, Table
 from pypika.validation import Validate, Status, execute
+
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)-8s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
 
 # Create tables
 employees = Table("employees")
@@ -60,26 +64,26 @@ cursor.execute("""
 """)
 # Note: No employees in HR (dept_id=3), so RIGHT_TOTAL will fail
 
-print("Testing LEFT_TOTAL (every employee has a department):")
-result = execute(cursor, query_left_total)
+log.info("Testing LEFT_TOTAL (every employee has a department):")
+result = execute(cursor, query_left_total, verbose=True)
 if result.status == Status.OK:
-    print("  PASSED - All employees belong to valid departments")
+    log.info("  PASSED - All employees belong to valid departments")
 elif result.status == Status.VALIDATION_ERROR:
-    print(f"  FAILED - {result.error_size} employees have invalid department IDs")
+    log.info("  FAILED - %s employees have invalid department IDs", result.error_size)
 
-print("\nTesting RIGHT_TOTAL (every department has employees):")
-result = execute(cursor, query_right_total)
+log.info("Testing RIGHT_TOTAL (every department has employees):")
+result = execute(cursor, query_right_total, verbose=True)
 if result.status == Status.OK:
-    print("  PASSED - All departments have employees")
+    log.info("  PASSED - All departments have employees")
 elif result.status == Status.VALIDATION_ERROR:
-    print(f"  FAILED - {result.error_size} departments have no employees")
-    print(f"  Sample: {result.error_sample}")
+    log.info("  FAILED - %s departments have no employees", result.error_size)
+    log.info("  Sample: %s", result.error_sample)
 
-print("\nTesting TOTAL (both directions):")
-result = execute(cursor, query_total)
+log.info("Testing TOTAL (both directions):")
+result = execute(cursor, query_total, verbose=True)
 if result.status == Status.OK:
-    print("  PASSED - Complete coverage in both directions")
+    log.info("  PASSED - Complete coverage in both directions")
 elif result.status == Status.VALIDATION_ERROR:
-    print(f"  FAILED - {result.error_msg}")
+    log.info("  FAILED - %s", result.error_msg)
 
 conn.close()

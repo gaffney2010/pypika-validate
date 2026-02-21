@@ -10,11 +10,14 @@ is unique.  A column-level uniqueness check would incorrectly raise a violation
 in this case; pypika-validate uses the full ON criterion instead.
 """
 
+import logging
 import sqlite3
 
 from pypika import Query, Table
 from pypika.validation import Validate, Status, execute
 
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)-8s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
 
 conn = sqlite3.connect(":memory:")
 cursor = conn.cursor()
@@ -45,23 +48,25 @@ query_ok = (
     .select(products.name, prices.price)
 )
 
-result = execute(cursor, query_ok)
-print(f"Status (expect OK): {result.status.name}")
+log.info("Composite key join — MANY_TO_ONE (expect OK):")
+result = execute(cursor, query_ok, verbose=True)
+log.info("Status: %s", result.status.name)
 assert result.status == Status.OK, f"Expected OK, got {result.status}"
 for row in result.value:
-    print(f"  {row}")
+    log.info("  %s", row)
 
 # ----------------------------------------------------------------
 # Failing case: add a duplicate (electronics, 1) entry in prices
 # ----------------------------------------------------------------
 cursor.execute("INSERT INTO prices VALUES ('electronics', 1, 888.0)")  # duplicate composite key
 
-result_bad = execute(cursor, query_ok)
-print(f"\nStatus (expect VALIDATION_ERROR): {result_bad.status.name}")
+log.info("After adding duplicate composite key (expect VALIDATION_ERROR):")
+result_bad = execute(cursor, query_ok, verbose=True)
+log.info("Status: %s", result_bad.status.name)
 assert result_bad.status == Status.VALIDATION_ERROR
-print(f"  Error: {result_bad.error_msg}")
-print(f"  Violation count: {result_bad.error_size}")
-print(f"  Sample: {result_bad.error_sample}")
+log.info("  Error: %s", result_bad.error_msg)
+log.info("  Violation count: %s", result_bad.error_size)
+log.info("  Sample: %s", result_bad.error_sample)
 
 # ----------------------------------------------------------------
 # LEFT_TOTAL on composite key: every product must have a price
@@ -76,11 +81,12 @@ query_total = (
     .select(products.name, prices.price)
 )
 
-result_total = execute(cursor, query_total)
-print(f"\nStatus (expect VALIDATION_ERROR for missing price): {result_total.status.name}")
+log.info("LEFT_TOTAL with missing price for 'Brick' (expect VALIDATION_ERROR):")
+result_total = execute(cursor, query_total, verbose=True)
+log.info("Status: %s", result_total.status.name)
 assert result_total.status == Status.VALIDATION_ERROR
-print(f"  Error: {result_total.error_msg}")
-print(f"  Unmatched rows: {result_total.error_sample}")
+log.info("  Error: %s", result_total.error_msg)
+log.info("  Unmatched rows: %s", result_total.error_sample)
 
 conn.close()
-print("\nAll assertions passed.")
+log.info("All assertions passed.")

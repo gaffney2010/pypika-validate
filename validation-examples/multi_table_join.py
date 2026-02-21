@@ -10,10 +10,14 @@ This is important because the cardinality of the combined result
 may differ from individual tables.
 """
 
+import logging
 import sqlite3
 
 from pypika import Query, Table
 from pypika.validation import Validate, Status, execute
+
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)-8s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
 
 # Create tables for an e-commerce scenario
 orders = Table("orders")
@@ -47,28 +51,27 @@ cursor.execute("INSERT INTO orders VALUES (1, 'Alice'), (2, 'Bob')")
 cursor.execute("INSERT INTO products VALUES (1, 'Widget', 9.99), (2, 'Gadget', 19.99), (3, 'Gizmo', 29.99)")
 cursor.execute("""
     INSERT INTO order_items VALUES
-    (1, 1, 1, 2),  -- Order 1: 2 Widgets
-    (2, 1, 2, 1),  -- Order 1: 1 Gadget
-    (3, 2, 1, 5),  -- Order 2: 5 Widgets
-    (4, 2, 3, 1)   -- Order 2: 1 Gizmo
+    (1, 1, 1, 2),
+    (2, 1, 2, 1),
+    (3, 2, 1, 5),
+    (4, 2, 3, 1)
 """)
 
-print("Multi-table join with step-by-step validation:")
-print("  orders -> order_items: ONE_TO_MANY (one order, many items)")
-print("  (result) -> products: MANY_TO_ONE (many items, one product each)")
-print()
+log.info("Multi-table join with step-by-step validation:")
+log.info("  orders -> order_items: ONE_TO_MANY (one order, many items)")
+log.info("  (result) -> products: MANY_TO_ONE (many items, one product each)")
 
-result = execute(cursor, query)
+result = execute(cursor, query, verbose=True)
 
 if result.status == Status.OK:
-    print("All validations PASSED!")
-    print("\nQuery results:")
+    log.info("All validations PASSED!")
+    log.info("Query results:")
     for row in result.value:
         order_id, qty, product_name, price = row
-        print(f"  Order {order_id}: {qty}x {product_name} @ ${price}")
+        log.info("  Order %s: %sx %s @ $%s", order_id, qty, product_name, price)
 elif result.status == Status.VALIDATION_ERROR:
-    print(f"Validation FAILED at: {result.error_loc}")
-    print(f"Error: {result.error_msg}")
-    print(f"Violations: {result.error_size}")
+    log.info("Validation FAILED at: %s", result.error_loc)
+    log.info("Error: %s", result.error_msg)
+    log.info("Violations: %s", result.error_size)
 
 conn.close()
