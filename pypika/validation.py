@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Flag, auto, Enum
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from pypika.queries import JoinOn, QueryBuilder
@@ -51,9 +51,27 @@ def _q(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def _tname(table: Any) -> str:
-    """Return the raw table name string from a Table object."""
-    return table._table_name
+def _item_from_and_name(item: Any) -> Tuple[str, str]:
+    """
+    Return ``(from_expr, display_name)`` for any join item.
+
+    * Regular ``Table``       → ``('"table_name"', 'table_name')``
+    * ``QueryBuilder`` (aliased subquery) → ``('(SELECT ...) "alias"', 'alias')``
+    * ``AliasedQuery`` (CTE / named query) → ``('"alias"', 'alias')``
+    """
+    if isinstance(item._table_name, str):
+        # Regular Table — _table_name is the plain string name.
+        name = item._table_name
+        return _q(name), name
+
+    # Subquery (QueryBuilder) or CTE reference (AliasedQuery).
+    alias = item.alias
+    sql = item.get_sql(quote_char='"', subquery=True, with_alias=True, with_namespace=True)
+    # QueryBuilder renders as "(SELECT ...) alias"; AliasedQuery renders as just its name.
+    if sql.startswith('('):
+        return sql, alias
+    else:
+        return _q(alias), alias
 
 
 def _get_left_table(criterion: Any, right_table: Any) -> Any:
@@ -71,18 +89,19 @@ def _get_left_table(criterion: Any, right_table: Any) -> Any:
 
 
 def _check_many_to_one(
-    cursor: pCursor, left_table: Any, right_table: Any, criterion_sql: str
+    cursor: pCursor,
+    left_from: str, right_from: str,
+    criterion_sql: str,
+    left_name: str, right_name: str,
 ) -> Optional[Results]:
     """
-    Verify every row in *left_table* matches at most one row in *right_table*.
+    Verify every row in *left* matches at most one row in *right*.
 
     SQL pattern (must return zero rows to pass):
         SELECT * FROM <left> WHERE (SELECT COUNT(*) FROM <right> WHERE <criterion>) > 1
     """
-    ltbl = _q(_tname(left_table))
-    rtbl = _q(_tname(right_table))
-    count_sql = f"SELECT COUNT(*) FROM {ltbl} WHERE (SELECT COUNT(*) FROM {rtbl} WHERE {criterion_sql}) > 1"
-    sample_sql = f"SELECT * FROM {ltbl} WHERE (SELECT COUNT(*) FROM {rtbl} WHERE {criterion_sql}) > 1 LIMIT 10"
+    count_sql = f"SELECT COUNT(*) FROM {left_from} WHERE (SELECT COUNT(*) FROM {right_from} WHERE {criterion_sql}) > 1"
+    sample_sql = f"SELECT * FROM {left_from} WHERE (SELECT COUNT(*) FROM {right_from} WHERE {criterion_sql}) > 1 LIMIT 10"
 
     cursor.execute(count_sql)
     count = cursor.fetchone()[0]
@@ -94,25 +113,26 @@ def _check_many_to_one(
     return Results(
         status=Status.VALIDATION_ERROR,
         error_msg=f"MANY_TO_ONE violated: {count} left-side row(s) match multiple right-side rows",
-        error_loc=f"{_tname(left_table)} MANY_TO_ONE → {_tname(right_table)}",
+        error_loc=f"{left_name} MANY_TO_ONE → {right_name}",
         error_size=count,
         error_sample=sample,
     )
 
 
 def _check_one_to_many(
-    cursor: pCursor, left_table: Any, right_table: Any, criterion_sql: str
+    cursor: pCursor,
+    left_from: str, right_from: str,
+    criterion_sql: str,
+    left_name: str, right_name: str,
 ) -> Optional[Results]:
     """
-    Verify every row in *right_table* matches at most one row in *left_table*.
+    Verify every row in *right* matches at most one row in *left*.
 
     SQL pattern (must return zero rows to pass):
         SELECT * FROM <right> WHERE (SELECT COUNT(*) FROM <left> WHERE <criterion>) > 1
     """
-    ltbl = _q(_tname(left_table))
-    rtbl = _q(_tname(right_table))
-    count_sql = f"SELECT COUNT(*) FROM {rtbl} WHERE (SELECT COUNT(*) FROM {ltbl} WHERE {criterion_sql}) > 1"
-    sample_sql = f"SELECT * FROM {rtbl} WHERE (SELECT COUNT(*) FROM {ltbl} WHERE {criterion_sql}) > 1 LIMIT 10"
+    count_sql = f"SELECT COUNT(*) FROM {right_from} WHERE (SELECT COUNT(*) FROM {left_from} WHERE {criterion_sql}) > 1"
+    sample_sql = f"SELECT * FROM {right_from} WHERE (SELECT COUNT(*) FROM {left_from} WHERE {criterion_sql}) > 1 LIMIT 10"
 
     cursor.execute(count_sql)
     count = cursor.fetchone()[0]
@@ -124,25 +144,26 @@ def _check_one_to_many(
     return Results(
         status=Status.VALIDATION_ERROR,
         error_msg=f"ONE_TO_MANY violated: {count} right-side row(s) match multiple left-side rows",
-        error_loc=f"{_tname(left_table)} ONE_TO_MANY → {_tname(right_table)}",
+        error_loc=f"{left_name} ONE_TO_MANY → {right_name}",
         error_size=count,
         error_sample=sample,
     )
 
 
 def _check_left_total(
-    cursor: pCursor, left_table: Any, right_table: Any, criterion_sql: str
+    cursor: pCursor,
+    left_from: str, right_from: str,
+    criterion_sql: str,
+    left_name: str, right_name: str,
 ) -> Optional[Results]:
     """
-    Verify every row in *left_table* has at least one match in *right_table*.
+    Verify every row in *left* has at least one match in *right*.
 
     SQL pattern (must return zero rows to pass):
         SELECT * FROM <left> WHERE NOT EXISTS (SELECT 1 FROM <right> WHERE <criterion>)
     """
-    ltbl = _q(_tname(left_table))
-    rtbl = _q(_tname(right_table))
-    count_sql = f"SELECT COUNT(*) FROM {ltbl} WHERE NOT EXISTS (SELECT 1 FROM {rtbl} WHERE {criterion_sql})"
-    sample_sql = f"SELECT * FROM {ltbl} WHERE NOT EXISTS (SELECT 1 FROM {rtbl} WHERE {criterion_sql}) LIMIT 10"
+    count_sql = f"SELECT COUNT(*) FROM {left_from} WHERE NOT EXISTS (SELECT 1 FROM {right_from} WHERE {criterion_sql})"
+    sample_sql = f"SELECT * FROM {left_from} WHERE NOT EXISTS (SELECT 1 FROM {right_from} WHERE {criterion_sql}) LIMIT 10"
 
     cursor.execute(count_sql)
     count = cursor.fetchone()[0]
@@ -154,25 +175,26 @@ def _check_left_total(
     return Results(
         status=Status.VALIDATION_ERROR,
         error_msg=f"LEFT_TOTAL violated: {count} left-side row(s) have no match on right side",
-        error_loc=f"{_tname(left_table)} LEFT_TOTAL → {_tname(right_table)}",
+        error_loc=f"{left_name} LEFT_TOTAL → {right_name}",
         error_size=count,
         error_sample=sample,
     )
 
 
 def _check_right_total(
-    cursor: pCursor, left_table: Any, right_table: Any, criterion_sql: str
+    cursor: pCursor,
+    left_from: str, right_from: str,
+    criterion_sql: str,
+    left_name: str, right_name: str,
 ) -> Optional[Results]:
     """
-    Verify every row in *right_table* has at least one match in *left_table*.
+    Verify every row in *right* has at least one match in *left*.
 
     SQL pattern (must return zero rows to pass):
         SELECT * FROM <right> WHERE NOT EXISTS (SELECT 1 FROM <left> WHERE <criterion>)
     """
-    ltbl = _q(_tname(left_table))
-    rtbl = _q(_tname(right_table))
-    count_sql = f"SELECT COUNT(*) FROM {rtbl} WHERE NOT EXISTS (SELECT 1 FROM {ltbl} WHERE {criterion_sql})"
-    sample_sql = f"SELECT * FROM {rtbl} WHERE NOT EXISTS (SELECT 1 FROM {ltbl} WHERE {criterion_sql}) LIMIT 10"
+    count_sql = f"SELECT COUNT(*) FROM {right_from} WHERE NOT EXISTS (SELECT 1 FROM {left_from} WHERE {criterion_sql})"
+    sample_sql = f"SELECT * FROM {right_from} WHERE NOT EXISTS (SELECT 1 FROM {left_from} WHERE {criterion_sql}) LIMIT 10"
 
     cursor.execute(count_sql)
     count = cursor.fetchone()[0]
@@ -184,7 +206,7 @@ def _check_right_total(
     return Results(
         status=Status.VALIDATION_ERROR,
         error_msg=f"RIGHT_TOTAL violated: {count} right-side row(s) have no match on left side",
-        error_loc=f"{_tname(right_table)} RIGHT_TOTAL → {_tname(left_table)}",
+        error_loc=f"{right_name} RIGHT_TOTAL → {left_name}",
         error_size=count,
         error_sample=sample,
     )
@@ -196,7 +218,8 @@ def _validate_join(cursor: pCursor, join: JoinOn) -> Optional[Results]:
     Results(VALIDATION_ERROR) encountered, or None if all checks pass.
 
     Validation uses correlated subqueries against the full ON criterion, so
-    composite keys and arbitrary expressions are handled correctly.
+    composite keys, arbitrary expressions, and subquery join targets are all
+    handled correctly.
     """
     validate = join.validation
     right_table = join.item
@@ -205,25 +228,27 @@ def _validate_join(cursor: pCursor, join: JoinOn) -> Optional[Results]:
     if left_table is None:
         return None
 
+    left_from, left_name = _item_from_and_name(left_table)
+    right_from, right_name = _item_from_and_name(right_table)
     criterion_sql = join.criterion.get_sql(quote_char='"', subquery=True, with_namespace=True)
 
     if validate & Validate.ONE_TO_MANY:
-        result = _check_one_to_many(cursor, left_table, right_table, criterion_sql)
+        result = _check_one_to_many(cursor, left_from, right_from, criterion_sql, left_name, right_name)
         if result is not None:
             return result
 
     if validate & Validate.MANY_TO_ONE:
-        result = _check_many_to_one(cursor, left_table, right_table, criterion_sql)
+        result = _check_many_to_one(cursor, left_from, right_from, criterion_sql, left_name, right_name)
         if result is not None:
             return result
 
     if validate & Validate.LEFT_TOTAL:
-        result = _check_left_total(cursor, left_table, right_table, criterion_sql)
+        result = _check_left_total(cursor, left_from, right_from, criterion_sql, left_name, right_name)
         if result is not None:
             return result
 
     if validate & Validate.RIGHT_TOTAL:
-        result = _check_right_total(cursor, left_table, right_table, criterion_sql)
+        result = _check_right_total(cursor, left_from, right_from, criterion_sql, left_name, right_name)
         if result is not None:
             return result
 

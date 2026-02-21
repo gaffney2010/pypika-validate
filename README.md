@@ -14,7 +14,17 @@ Query.from_(base_table).join(join_table, JoinType.inner, validate=Validate.ONE_T
 
 This does additional work to check that the tables are 1-1.
 
-Validation works against the full `ON` criterion, so composite keys and arbitrary expressions are supported.  For a composite key join such as:
+Validation works against the full `ON` criterion, so composite keys, arbitrary expressions, and **subquery join targets** are supported.
+
+When the right-hand side of a join is an aliased subquery, the subquery SQL is inlined into the validation correlated subqueries.  Importantly, any `WHERE` filter inside the subquery affects which rows are in scope for validation:
+
+```python
+# Only fulfilled orders are in scope — an unfulfilled duplicate does not trigger MANY_TO_ONE
+fulfilled = Query.from_(order_items).where(order_items.fulfilled == 1).select("*").as_("fulfilled")
+Query.from_(products).join(fulfilled, validate=Validate.MANY_TO_ONE).on(products.id == fulfilled.product_id)
+```
+
+For a composite key join such as:
 
 ```python
 Query.from_(base_table)

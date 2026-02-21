@@ -550,6 +550,179 @@ class MultiTableJoinTests(unittest.TestCase):
         self.assertEqual(result.status, Status.VALIDATION_ERROR)
 
 
+class SubqueryJoinTests(unittest.TestCase):
+    """
+    Joins where the right-hand side is an aliased subquery (QueryBuilder).
+
+    pypika allows any aliased QueryBuilder to appear as a join target.
+    Validation must work end-to-end in this case, inlining the subquery SQL
+    inside the correlated validation queries.
+    """
+
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.cursor = self.conn.cursor()
+        self.cursor.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT)")
+        self.cursor.execute(
+            "CREATE TABLE order_items (id INTEGER, product_id INTEGER, qty INTEGER, fulfilled INTEGER)"
+        )
+        self.products = Table("products")
+        self.order_items = Table("order_items")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _fulfilled_sub(self):
+        """Subquery: fulfilled order rows."""
+        oi = self.order_items
+        return (
+            Query.from_(oi)
+            .where(oi.fulfilled == 1)
+            .select(oi.product_id, oi.qty)
+            .as_("fulfilled")
+        )
+
+    def test_many_to_one_passes_when_subquery_rows_are_unique(self):
+        """Each product has exactly one fulfilled row in the subquery."""
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Widget'), (2, 'Gadget')")
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 5, 1), (2, 2, 3, 1)")
+        sub = self._fulfilled_sub()
+        query = (
+            Query.from_(self.products)
+            .join(sub, validate=Validate.MANY_TO_ONE)
+            .on(self.products.id == sub.product_id)
+            .select(self.products.name, sub.qty)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.OK)
+
+    def test_many_to_one_ok_returns_rows(self):
+        """OK result contains the actual joined rows."""
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Widget')")
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 5, 1)")
+        sub = self._fulfilled_sub()
+        query = (
+            Query.from_(self.products)
+            .join(sub, validate=Validate.MANY_TO_ONE)
+            .on(self.products.id == sub.product_id)
+            .select(self.products.name, sub.qty)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.OK)
+        self.assertEqual(result.value, [("Widget", 5)])
+
+    def test_many_to_one_fails_when_subquery_has_duplicate_rows(self):
+        """Two fulfilled rows for the same product cause MANY_TO_ONE to fail."""
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Widget')")
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 5, 1), (2, 1, 8, 1)")
+        sub = self._fulfilled_sub()
+        query = (
+            Query.from_(self.products)
+            .join(sub, validate=Validate.MANY_TO_ONE)
+            .on(self.products.id == sub.product_id)
+            .select(self.products.name, sub.qty)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+
+    def test_many_to_one_failure_has_error_details(self):
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Widget')")
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 5, 1), (2, 1, 8, 1)")
+        sub = self._fulfilled_sub()
+        query = (
+            Query.from_(self.products)
+            .join(sub, validate=Validate.MANY_TO_ONE)
+            .on(self.products.id == sub.product_id)
+            .select(self.products.name, sub.qty)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+        self.assertIsNotNone(result.error_msg)
+        self.assertIsNotNone(result.error_loc)
+        self.assertGreater(result.error_size, 0)
+        self.assertIsNotNone(result.error_sample)
+
+    def test_left_total_passes_when_every_product_has_fulfilled_row(self):
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Widget'), (2, 'Gadget')")
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 5, 1), (2, 2, 3, 1)")
+        sub = self._fulfilled_sub()
+        query = (
+            Query.from_(self.products)
+            .join(sub, validate=Validate.LEFT_TOTAL)
+            .on(self.products.id == sub.product_id)
+            .select(self.products.name, sub.qty)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.OK)
+
+    def test_left_total_fails_when_product_has_no_fulfilled_row(self):
+        """A product with no fulfilled order fails LEFT_TOTAL against the subquery."""
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Widget'), (2, 'Orphan')")
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 5, 1)")  # only product 1
+        sub = self._fulfilled_sub()
+        query = (
+            Query.from_(self.products)
+            .join(sub, validate=Validate.LEFT_TOTAL)
+            .on(self.products.id == sub.product_id)
+            .select(self.products.name, sub.qty)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+        self.assertEqual(result.error_size, 1)
+        self.assertEqual(len(result.error_sample), 1)
+
+    def test_subquery_filter_affects_validation_scope(self):
+        """
+        The subquery only includes fulfilled=1 rows.  An unfulfilled duplicate
+        should NOT cause MANY_TO_ONE to fail, because it is excluded by the
+        subquery's WHERE clause.
+        """
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Widget')")
+        # One fulfilled row + one unfulfilled row for the same product
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 5, 1), (2, 1, 8, 0)")
+        sub = self._fulfilled_sub()
+        query = (
+            Query.from_(self.products)
+            .join(sub, validate=Validate.MANY_TO_ONE)
+            .on(self.products.id == sub.product_id)
+            .select(self.products.name, sub.qty)
+        )
+        result = execute(self.cursor, query)
+        # The unfulfilled row is filtered out; only one row per product in the subquery
+        self.assertEqual(result.status, Status.OK)
+
+    def test_one_to_many_passes_when_products_are_unique(self):
+        """Each fulfilled row maps to at most one product (products.id is unique)."""
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Widget'), (2, 'Gadget')")
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 5, 1), (2, 2, 3, 1)")
+        sub = self._fulfilled_sub()
+        query = (
+            Query.from_(self.products)
+            .join(sub, validate=Validate.ONE_TO_MANY)
+            .on(self.products.id == sub.product_id)
+            .select(self.products.name, sub.qty)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.OK)
+
+    def test_one_to_many_fails_when_products_has_duplicate_id(self):
+        """Duplicate products.id causes ONE_TO_MANY to fail."""
+        # Recreate without PRIMARY KEY so we can insert duplicate ids
+        self.cursor.execute("DROP TABLE products")
+        self.cursor.execute("CREATE TABLE products (id INTEGER, name TEXT)")
+        self.cursor.execute("INSERT INTO products VALUES (1, 'Widget'), (1, 'Widget v2')")
+        self.cursor.execute("INSERT INTO order_items VALUES (1, 1, 5, 1)")
+        sub = self._fulfilled_sub()
+        query = (
+            Query.from_(self.products)
+            .join(sub, validate=Validate.ONE_TO_MANY)
+            .on(self.products.id == sub.product_id)
+            .select(self.products.name, sub.qty)
+        )
+        result = execute(self.cursor, query)
+        self.assertEqual(result.status, Status.VALIDATION_ERROR)
+
+
 class CompositeKeyJoinTests(unittest.TestCase):
     """
     Joins on composite (multi-column) ON clauses.
